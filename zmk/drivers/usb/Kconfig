@@ -1,0 +1,13 @@
+# Copyright (c) 2025 scholzri
+# SPDX-License-Identifier: Apache-2.0
+
+config USB_DC_B91
+	bool "Telink B91 USB device controller (legacy API)"
+	default y
+	depends on SOC_SERIES_TLSR951X
+	select USB_DEVICE_DRIVER
+	select DYNAMIC_INTERRUPTS
+	help
+	  Legacy usb_dc.h driver for Telink B91 (TLSR9518/9511) SoC.
+	  Required for ZMK USB HID support on this platform.
+	  Implements USB full-speed with EP0 (8-byte MPS) + EP1-8.

@@ -1,0 +1,40 @@
+From 7abb046a22899367e971d27823659a7f7403bf5b Mon Sep 17 00:00:00 2001
+From: scholzri <33288574+scholzri@users.noreply.github.com>
+Date: Sun, 1 Mar 2026 15:00:03 +0100
+Subject: [PATCH] fix(gpio): fix WRITE_BIT double-BIT in actas_gpio pin
+ configure
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+WRITE_BIT(var, bit, set) internally applies BIT(bit), so passing
+BIT(pin) as the bit argument results in BIT(BIT(pin)). For pins >= 3
+this overflows uint8_t and no bit is set, leaving the pin in its
+alternate function mode instead of GPIO mode.
+
+Fix by passing pin directly, matching the OEN and IE calls nearby.
+
+Affected: PE4-PE7 (JTAG), PA3 — all stuck in alternate function.
+Symptom: kscan matrix columns 0-3 and 7 never drive, no key events.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+---
+ drivers/gpio/gpio_b91.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpio/gpio_b91.c b/drivers/gpio/gpio_b91.c
+index b4d9a16236..a791e0577b 100644
+--- a/drivers/gpio/gpio_b91.c
++++ b/drivers/gpio/gpio_b91.c
+@@ -334,7 +334,7 @@ static int gpio_b91_pin_configure(const struct device *dev,
+ 	}
+ 
+ 	/* GPIO function enable */
+-	WRITE_BIT(gpio->actas_gpio, BIT(pin), 1);
++	WRITE_BIT(gpio->actas_gpio, pin, 1);
+ 
+ 	/* Set GPIO pull-up / pull-down resistors */
+ 	gpio_b91_config_up_down_res(gpio, pin, flags);
+-- 
+2.53.0
+

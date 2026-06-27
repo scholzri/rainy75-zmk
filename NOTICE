@@ -1,0 +1,40 @@
+Wobkey Rainy 75 Pro — ZMK firmware & reverse engineering
+Copyright 2025-2026 scholzri
+
+This product includes original software developed for this project, licensed
+under the Apache License, Version 2.0 (see the LICENSE file).
+
+================================================================================
+Third-party components fetched at build time (NOT included in this repository)
+================================================================================
+
+No third-party code is redistributed in this repository. The build fetches it:
+
+  ZMK Firmware   MIT          https://github.com/zmkfirmware/zmk
+  Zephyr RTOS    Apache-2.0   https://github.com/zephyrproject-rtos/zephyr
+  MCUboot        Apache-2.0   https://github.com/mcu-tools/mcuboot
+  hal_telink     Apache-2.0   https://github.com/telink-semi/hal_telink
+    (the above are fetched by `west`, per zmk/west.yml)
+
+  Telink B91 Bluetooth LE controller library — liblt_9518_zephyr.a
+    Source:    https://github.com/telink-semi/zephyr_hal_telink_b91_ble_lib
+    Copyright (c) Telink Semiconductor (Shanghai) Co., Ltd.
+    License:   PROPRIETARY — confidential, non-transferable, granted under NDA;
+               NOT redistributable. This repository therefore does NOT contain
+               the blob. `fetch_ble_blob.sh` downloads it at build time (pinned
+               commit + SHA-256 verified) from Telink's own public repository,
+               and links it unmodified.
+
+================================================================================
+Intentionally NOT included (proprietary / copyrighted third-party material)
+================================================================================
+
+The Telink BLE blob (above), the vendor datasheet, the official stock firmware
+images, the decompiled firmware, and the Ghidra project are all excluded from
+this repository (see .gitignore). They are copyright of their respective owners
+(Telink Semiconductor / Wobkey / Evision Semiconductor). The reverse-engineering
+findings derived from them are documented as original prose and diagrams under
+docs/ for interoperability and educational purposes.
+
+This project is an independent, unofficial effort and is not affiliated with,
+endorsed by, or supported by Wobkey, Telink, or Evision.

@@ -1,0 +1,42 @@
+rsource "drivers/usb/Kconfig"
+rsource "drivers/bluetooth/Kconfig"
+rsource "drivers/led_strip/Kconfig"
+rsource "drivers/sensor/Kconfig"
+rsource "drivers/watchdog/Kconfig"
+
+config BOOT_DIAG
+	bool "Boot diagnostic (.noinit SRAM buffer for SWS debug)"
+	default n
+	help
+	  Records boot stage codes to a .noinit SRAM buffer that can be read
+	  via SWS/BDT even when USB is not working. Essential for first-flash
+	  debugging when USB serial is not yet proven.
+
+	  Read the buffer after flash:
+	    addr=$(riscv32-elf-nm build/zephyr/zephyr.elf | grep boot_diag_buf)
+	    ./reverse/tools/sws_flash.sh sram 0x<addr> 36
+
+config BOOT_DIAG_GPIO
+	bool "Boot diagnostic GPIO heartbeat (PD7)"
+	default y
+	depends on BOOT_DIAG
+	help
+	  Toggle PD7 at each boot stage for logic analyzer visibility.
+	  Uses direct register access (works before GPIO driver init).
+	  PD7 is free on the Rainy 75 (not used by matrix, USB, or RGB).
+
+config FLASH_MGMT
+	bool "Raw flash management via mcumgr"
+	default n
+	depends on MCUMGR && FLASH
+	help
+	  Adds a custom mcumgr group (ID 64) with raw flash erase/write/read
+	  commands. Used to restore original firmware via USB without SWS
+	  hardware. Protected region >= 0xFE000 is always refused.
+
+config RAINY_RGB
+	bool "Rainy 75 out-of-tree RGB lighting engine"
+	depends on LED_STRIP_B91_SPI
+	help
+	  Custom WS2812 lighting engine (effects, reactivity, per-key) that
+	  replaces ZMK's rgb_underglow. Owns the led_strip device directly.

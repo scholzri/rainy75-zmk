@@ -1,0 +1,113 @@
+# Build output
+build/
+build-mcuboot/
+
+# West workspace (fetched by west update)
+zmk-src/
+zephyr/
+modules/
+bootloader/
+.west/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# IDE
+.idea/
+.vscode/
+
+# Playwright MCP
+.playwright-mcp/
+
+# Toolchain (local install)
+toolchain/
+reverse/toolchain/
+reverse/sdk/
+reverse/.venv/
+
+# BSim work directory
+reverse/bsim_work/
+
+# BDT (Telink Burning and Debugging Tool — large binaries, downloaded separately)
+reverse/tools/bdt/release/
+reverse/tools/bdt/Telink-BDT-Linux-X64-*.zip
+reverse/tools/bdt/BDT_User_Guide.pdf
+reverse/tools/bdt/Burning_EVK_User_Guide.pdf
+
+# Firmware dumps (large binary dumps, not tracked)
+reverse/firmware/original_dump_*.bin
+reverse/firmware/original_full_flash.bin
+reverse/firmware/original_readback.bin
+reverse/firmware/calibration_*.bin
+
+# === Proprietary / copyrighted — MUST NOT be published ===
+# Vendor datasheet, official firmware exe, manual (c) Telink / Wobkey / Evision
+reverse/reference/
+# Ghidra project database embeds the proprietary firmware image
+reverse/ghidra/
+# RE analysis data + Ghidra pipeline — all derived from the proprietary firmware (the
+# scripts also reference a local Ghidra venv and aren't runnable without the firmware).
+# The findings are published as prose in docs/firmware-analysis.md; the raw data and
+# tooling are not.
+reverse/analysis/
+reverse/scripts/
+# Extracted / OTA stock firmware binaries + firmware-derived dumps (proprietary)
+reverse/firmware/*.bin
+reverse/resource_param_128K.bin
+hidden_layers_dump.bin
+# Telink BLE controller blob — confidential/NDA, NOT redistributable.
+# Fetched at build time by fetch_ble_blob.sh; never committed (see NOTICE).
+zmk/lib/*.a
+# Source images (curated copies live in docs/images/), signing keys, teardown
+# photo source, archived/experimental scripts, IDE + tool config, test junk.
+Bilder/
+keys/
+reverse/photos/
+reverse/scripts/obsolete/
+test_app/
+test_*.bin
+.mcp.json
+.claude/
+.gitmodules
+# Experimental / throwaway RE tools — kept local; the published toolset is the
+# documented set (ota_flasher, prepare_ota, restore_original, via_probe,
+# via_dump_keymap, probe_commands, mem_reader, wob_probe, extract_stock_firmware).
+reverse/tools/bdt_wrapper.py
+reverse/tools/ble_mcumgr_test.py
+reverse/tools/decode_diag.py
+reverse/tools/poll_test.py
+reverse/tools/poll_test2.py
+reverse/tools/studio_diag.py
+reverse/tools/studio_repeat_test.py
+reverse/tools/studio_step_test.py
+reverse/tools/studio_test.py
+reverse/tools/usb_reset_test.py
+reverse/tools/via_deep_probe.py
+reverse/tools/via_hidden_layers.py
+reverse/tools/webserial_test.html
+reverse/tools/bdt/99-rainy75-zmk.rules
+
+# Build artifacts (regenerable)
+combined.bin
+build-bridge/
+build-test/
+
+# Internal working docs (contain the dev device MAC / are AI task prompts — not for publication)
+docs/stage2-ble-prompt.md
+docs/demo-cheatsheet.md
+# Development-process artifacts (design specs + implementation plans). The polished
+# docs/ are the published documentation; these completed plans stay local.
+docs/plans/
+docs/superpowers/
+
+# Shell config (dotfiles, not project files)
+.bash_profile
+.bashrc
+.profile
+.zprofile
+.zshrc
+.gitconfig
+.ripgreprc
+build-ansi/

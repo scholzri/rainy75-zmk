@@ -1,0 +1,19 @@
+config BT_HCI_B91
+	bool "Telink B91 BLE HCI driver"
+	default y
+	depends on BT && DT_HAS_TELINK_B91_BT_HCI_ENABLED
+	select BT_HAS_HCI_VS
+	help
+	  Bluetooth HCI driver for the Telink B91 (TLSR951x) SoC.
+	  Uses our own shim around the BLE controller blob
+	  (liblt_9518_zephyr.a) from telink-semi/zephyr_hal_telink_b91_ble_lib.
+
+config BT_HCI_B91_RX_STACK_SIZE
+	int "B91 BLE RX thread stack size"
+	depends on BT_HCI_B91
+	default 2048
+
+config BT_HCI_B91_RX_PRIO
+	int "B91 BLE RX thread priority"
+	depends on BT_HCI_B91
+	default 2

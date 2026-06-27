@@ -1,0 +1,30 @@
+From 4927fe9e6afc4a299755b6f3b9636434af41c888 Mon Sep 17 00:00:00 2001
+From: scholzri <33288574+scholzri@users.noreply.github.com>
+Date: Sun, 1 Mar 2026 19:49:26 +0100
+Subject: [PATCH] fix(build): exclude sys.c when BT_HCI_B91 is enabled
+
+The BLE controller blob defines sys_init(), which collides with
+hal_telink's sys.c definition. The existing guard excludes sys.c
+for BT_B91 but not for BT_HCI_B91 (our custom HCI driver).
+
+Add NOT CONFIG_BT_HCI_B91 to the guard condition.
+---
+ tlsr9/CMakeLists.txt | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tlsr9/CMakeLists.txt b/tlsr9/CMakeLists.txt
+index 0f44f47..b35d4c1 100644
+--- a/tlsr9/CMakeLists.txt
++++ b/tlsr9/CMakeLists.txt
+@@ -12,7 +12,7 @@ zephyr_include_directories(drivers/B91/reg_include)
+ zephyr_include_directories(drivers/B91)
+ 
+ # soc.c referance sources
+-if (NOT CONFIG_PM AND NOT CONFIG_BT_B91)
++if (NOT CONFIG_PM AND NOT CONFIG_BT_B91 AND NOT CONFIG_BT_HCI_B91)
+ zephyr_library_sources(drivers/B91/sys.c)
+ endif() # no PM and no BLE external dependency
+ zephyr_library_sources(drivers/B91/pm.c)
+-- 
+2.53.0
+

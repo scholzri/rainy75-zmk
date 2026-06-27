@@ -1,0 +1,16 @@
+config LED_STRIP_B91_SPI
+	bool "Telink B91 SPI WS2812 LED strip driver"
+	default y
+	depends on SOC_SERIES_TLSR951X
+	select LED_STRIP
+	help
+	  WS2812 LED strip driver using the B91's PSPI peripheral and DMA.
+	  Data pin: PB7 (PSPI MOSI). SPI clock: 6 MHz. DMA channel 4.
+
+config LED_STRIP_B91_SPI_PC2_POWER
+	bool "Drive PC2 HIGH for LED power enable"
+	depends on LED_STRIP_B91_SPI
+	help
+	  PC2 controls a MOSFET gate for LED VCC (active-high = power ON).
+	  Without this, the WS2812 LED strip has no power supply.
+	  Confirmed on hardware: PC2 HIGH = LEDs powered, PC2 LOW = LEDs off.

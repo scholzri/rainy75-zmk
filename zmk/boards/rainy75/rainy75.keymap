@@ -1,0 +1,74 @@
+#include <behaviors.dtsi>
+#include <rainy_rgb.dtsi>
+#include <dt-bindings/rainy_rgb.h>
+#include <dt-bindings/zmk/keys.h>
+#include <dt-bindings/zmk/bt.h>
+#include <dt-bindings/zmk/outputs.h>
+
+/* ── Physical layout: ISO (default) or ANSI (CONFIG_RAINY75_ANSI) ──
+ * ANSI drops the ISO <> key (full-width Left-Shift) and shifts the Enter block:
+ * the ISO Enter position becomes Backslash, and the ISO #~ (NUHS) position
+ * becomes the wide Enter. UNVERIFIED on real ANSI hardware — see CONTRIBUTING.md. */
+#ifdef CONFIG_RAINY75_ANSI
+#define K_ENTER_TOP  &kp BSLH   /* ISO Enter (top) -> ANSI backslash */
+#define K_HASH       &kp RET    /* ISO #~ (NUHS)   -> ANSI wide Enter */
+#define K_LT_GT      &none      /* ISO <> (NUBS)   -> absent on ANSI */
+#else
+#define K_ENTER_TOP  &kp RET
+#define K_HASH       &kp NUHS
+#define K_LT_GT      &kp NUBS
+#endif
+
+/ {
+	keymap {
+		compatible = "zmk,keymap";
+
+		default_layer {
+			/* ISO DE 75% — Layer 0
+			 * ,------+----+----+----+----+----+----+----+----+----+----+----+----+----+----.
+			 * | ESC  | F1 | F2 | F3 | F4 | F5 | F6 | F7 | F8 | F9 |F10 |F11 |F12 |DEL |HOME|
+			 * |------+----+----+----+----+----+----+----+----+----+----+----+----+----+----|
+			 * |  `   | 1  | 2  | 3  | 4  | 5  | 6  | 7  | 8  | 9  | 0  | -  | =  |BKSP|END |
+			 * |------+----+----+----+----+----+----+----+----+----+----+----+----+----+----|
+			 * | TAB  | Q  | W  | E  | R  | T  | Y  | U  | I  | O  | P  | [  | ]  |ENTR|    |
+			 * |------+----+----+----+----+----+----+----+----+----+----+----+----+----+----|
+			 * | CAPS | A  | S  | D  | F  | G  | H  | J  | K  | L  | ;  | '  | #  |PGUP|PGDN|
+			 * |------+----+----+----+----+----+----+----+----+----+----+----+----+----+----|
+			 * |LSHFT | <> | Z  | X  | C  | V  | B  | N  | M  | ,  | .  | /  |RSHF| UP |    |
+			 * |------+----+----+----+----+----+----+----+----+----+----+----+----+----+----|
+			 * |LCTRL|LGUI|LALT|              SPACE             |RALT| Fn |RCTL|LEFT|DOWN|RGHT|
+			 * `------+----+----+----+----+----+----+----+----+----+----+----+----+----+----'
+			 */
+			bindings = <
+				&kp ESC   &kp F1   &kp F2   &kp F3  &kp F4  &kp F5  &kp F6  &kp F7  &kp F8  &kp F9    &kp F10   &kp F11   &kp F12   &kp DEL   &kp HOME
+				&kp GRAVE &kp N1   &kp N2   &kp N3  &kp N4  &kp N5  &kp N6  &kp N7  &kp N8  &kp N9    &kp N0    &kp MINUS &kp EQUAL &kp BSPC  &kp END
+				&kp TAB   &kp Q    &kp W    &kp E   &kp R   &kp T   &kp Y   &kp U   &kp I   &kp O     &kp P     &kp LBKT  &kp RBKT  K_ENTER_TOP
+				&kp CLCK  &kp A    &kp S    &kp D   &kp F   &kp G   &kp H   &kp J   &kp K   &kp L     &kp SEMI  &kp SQT   K_HASH             &kp PG_UP &kp PG_DN
+				&kp LSHFT K_LT_GT  &kp Z    &kp X   &kp C   &kp V   &kp B   &kp N   &kp M   &kp COMMA &kp DOT   &kp FSLH            &kp RSHFT &kp UP
+				&kp LCTRL &kp LGUI &kp LALT                                          &kp SPACE &kp RALT &mo 1     &kp RCTRL           &kp LEFT  &kp DOWN  &kp RIGHT
+			>;
+		};
+
+		fn_layer {
+			/* Fn Layer — Layer 1
+			 * Fn+F1/F2/F3 = BT profile 1/2/3
+			 * Fn+F4 = Output toggle (USB/BLE)
+			 * Fn+F5-F12 = Media keys
+			 * Fn+ESC = Studio unlock (press to allow ZMK Studio keymap editing)
+			 * Fn+Backspace = RGB toggle
+			 * Fn+Enter = RGB effect cycle
+			 * Fn+# = RGB hue cycle
+			 * Fn+↑/↓ = RGB brightness up/down
+			 * Fn+←/→ = RGB speed down/up
+			 */
+			bindings = <
+				&studio_unlock &bt BT_SEL 0 &bt BT_SEL 1 &bt BT_SEL 2 &out OUT_TOG &kp C_PREV &kp C_NEXT &kp C_MUTE &kp C_VOL_DN &kp C_VOL_UP &kp C_PP &kp C_BRI_DN &kp C_BRI_UP &bt BT_CLR &out OUT_TOG
+				&trans &trans &trans &trans &trans &trans &trans &trans &trans &trans &trans &trans &trans &rgb RGB_TOG &trans
+				&trans &trans &trans &trans &trans &trans &trans &trans &trans &trans &trans &trans &trans &rgb RGB_EFF
+				&trans &trans &trans &trans &trans &trans &trans &trans &trans &trans &trans &trans &rgb RGB_HUI        &trans &trans
+				&trans &trans &trans &trans &trans &trans &rgb RGB_BAT &trans &trans &trans &trans &trans        &trans &rgb RGB_BRI
+				&trans &trans &trans                                          &trans &trans &trans &trans        &rgb RGB_SPD &rgb RGB_BRD &rgb RGB_SPI
+			>;
+		};
+	};
+};

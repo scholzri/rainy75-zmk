@@ -1,0 +1,3 @@
+description: Telink B91 Bluetooth HCI Controller
+compatible: "telink,b91-bt-hci"
+include: bt-hci.yaml

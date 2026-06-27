@@ -1,0 +1,22 @@
+# Copyright (c) 2025 scholzri
+# SPDX-License-Identifier: Apache-2.0
+
+description: Telink B91 USB device controller
+
+compatible: "telink,b91-udc"
+
+include: usb-ep.yaml
+
+properties:
+  reg:
+    required: true
+
+  interrupts:
+    required: true
+    description: |
+      Five interrupt specifiers in order:
+        0: USB_CTRL_EP_SETUP  (PLIC IRQ 7)
+        1: USB_CTRL_EP_DATA   (PLIC IRQ 8)
+        2: USB_CTRL_EP_STATUS (PLIC IRQ 9)
+        3: USB_ENDPOINT       (PLIC IRQ 11)
+        4: USB_RESET          (PLIC IRQ 35)

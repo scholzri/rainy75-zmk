@@ -1,0 +1,7 @@
+file_format: "2"
+id: rainy75
+name: Rainy 75 Pro ISO DE
+type: board
+arch: riscv
+outputs:
+  - ble

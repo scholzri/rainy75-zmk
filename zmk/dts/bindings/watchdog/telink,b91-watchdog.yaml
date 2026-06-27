@@ -1,0 +1,9 @@
+description: Telink B91 hardware watchdog timer
+
+compatible: "telink,b91-watchdog"
+
+include: base.yaml
+
+properties:
+  reg:
+    required: true

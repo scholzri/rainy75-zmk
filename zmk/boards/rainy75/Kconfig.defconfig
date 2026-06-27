@@ -1,0 +1,35 @@
+if BOARD_RAINY75
+
+config SOC_FLASH_TELINK_B91
+	default y if FLASH
+
+config WDT_B91
+	default y
+	depends on WDT
+
+# ---- Multi-level IRQ fix ----
+# The PLIC driver selects MULTI_LEVEL_INTERRUPTS + 2ND_LEVEL_INTERRUPTS.
+# The B91 SoC defconfig omits MAX_IRQ_PER_AGGREGATOR, leaving it at 0.
+# With 0, PLIC_MIN_IRQ_NUM = MIN(riscv_ndev=63, 0) = 0, causing ALL PLIC
+# interrupts to be treated as spurious (z_irq_spurious crash).
+#
+# We also set 2ND_LVL_ISR_TBL_OFFSET=12 to separate the PLIC ISR table
+# from level-1 entries (MTIP=7, MEIP=11).  Without this, PLIC source 7
+# (USB_SETUP) collides with MTIP, and PLIC source 11 (USB_ENDPOINT)
+# collides with MEI (the PLIC handler itself).
+#
+# The mtimer DTS is overridden in rainy75.dts to use <&hlic 7> so that
+# the timer ISR stays at _sw_isr_table[7] (level-1 direct dispatch).
+#
+# NUM_IRQS = 12 (level-1) + 64 (PLIC sources) = 76.
+
+config MAX_IRQ_PER_AGGREGATOR
+	default 64
+
+config 2ND_LVL_ISR_TBL_OFFSET
+	default 12
+
+config NUM_IRQS
+	default 76
+
+endif # BOARD_RAINY75

@@ -1,0 +1,22 @@
+# Telink Burning EVK — allow non-root access via BDT + unbind usblp
+# Install: sudo cp 99-telink-evk.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules
+#
+# EVK USB IDs (TLSR8266 bridge chip):
+#   248a:826a — standard Burning EVK ("Telink Web Debugger")
+#   248a:826b — alternate EVK variant (added in BDT v1.1.0)
+#   248a:8266 — Burning EVK v3 ("Telink Debugger v4.6")
+#
+# IMPORTANT: The EVK enumerates as USB Printer class, causing Linux's usblp
+# kernel module to auto-bind and block BDT communication. The RUN rule below
+# unbinds usblp automatically on hotplug. Without this, all BDT reads return
+# zeros and writes fail silently.
+
+# USB device-level: set permissions
+SUBSYSTEM=="usb", ATTR{idVendor}=="248a", ATTR{idProduct}=="826a", MODE="0666", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="248a", ATTR{idProduct}=="826b", MODE="0666", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="248a", ATTR{idProduct}=="8266", MODE="0666", TAG+="uaccess"
+
+# USB interface-level: unbind usblp if it grabs the EVK
+SUBSYSTEM=="usb", DRIVER=="usblp", ATTRS{idVendor}=="248a", ATTRS{idProduct}=="826a", RUN+="/bin/sh -c 'echo $kernel > /sys/bus/usb/drivers/usblp/unbind'"
+SUBSYSTEM=="usb", DRIVER=="usblp", ATTRS{idVendor}=="248a", ATTRS{idProduct}=="826b", RUN+="/bin/sh -c 'echo $kernel > /sys/bus/usb/drivers/usblp/unbind'"
+SUBSYSTEM=="usb", DRIVER=="usblp", ATTRS{idVendor}=="248a", ATTRS{idProduct}=="8266", RUN+="/bin/sh -c 'echo $kernel > /sys/bus/usb/drivers/usblp/unbind'"

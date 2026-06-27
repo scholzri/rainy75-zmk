@@ -1,0 +1,16 @@
+# Rainy 75 Pro — original firmware (RDR VID, OTA flashing)
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="320f", ATTRS{idProduct}=="5055", MODE="0666"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="320f", ATTRS{idProduct}=="5055", MODE="0666", TAG+="uaccess"
+
+# Rainy 75 Pro ZMK firmware - app (OpenMoko VID)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="615e", MODE="0666", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="615e", MODE="0666", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="615e", MODE="0666"
+
+# MCUboot serial recovery (Nordic Semiconductor VID)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2fe3", ATTRS{idProduct}=="0100", MODE="0666", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="2fe3", ATTRS{idProduct}=="0100", MODE="0666", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1"
+
+# Telink Burning EVK debugger
+SUBSYSTEM=="usb", ATTRS{idVendor}=="248a", ATTRS{idProduct}=="8266", MODE="0666", TAG+="uaccess"
+ACTION=="add", SUBSYSTEM=="usb", DRIVER=="usblp", ATTRS{idVendor}=="248a", ATTRS{idProduct}=="8266", RUN+="/bin/sh -c 'echo -n %k > /sys/bus/usb/drivers/usblp/unbind'"

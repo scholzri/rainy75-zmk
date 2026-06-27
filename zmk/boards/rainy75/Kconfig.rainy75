@@ -1,0 +1,12 @@
+config BOARD_RAINY75
+	select SOC_TLSR9518
+
+config RAINY75_ANSI
+	bool "ANSI physical layout (UNTESTED)"
+	default n
+	help
+	  Build the ANSI keymap variant instead of the default ISO. ANSI removes the
+	  ISO <> key (full-width Left-Shift) and remaps the Enter / backslash area.
+	  Derived from the vendor VIA layout but NOT verified on real ANSI hardware —
+	  if you have an ANSI Rainy 75, please verify and report (see CONTRIBUTING.md).
+	  Build with: -DCONFIG_RAINY75_ANSI=y

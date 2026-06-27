@@ -1,0 +1,138 @@
+From ac6847e92c3d45cb56fd739ba1e19ee8a7b72f27 Mon Sep 17 00:00:00 2001
+From: scholzri <33288574+scholzri@users.noreply.github.com>
+Date: Sun, 1 Mar 2026 19:44:37 +0100
+Subject: [PATCH] fix(gpio): fix B91 GPIO interrupt support with multi-level
+ PLIC
+
+The B91 GPIO driver has several bugs that prevent GPIO interrupts
+from working when Zephyr uses multi-level interrupt encoding
+(CONFIG_MULTI_LEVEL_INTERRUPTS=y):
+
+1. DT_INST_IRQN() returns multi-level encoded values (e.g. 0x1A00
+   for PLIC source 25), but gpio_b91_irq_set() stores this in a
+   uint8_t, truncating to 0. All comparisons against IRQ_GPIO (25),
+   IRQ_GPIO2_RISC0 (26), IRQ_GPIO2_RISC1 (27) then fail, so no
+   interrupt configuration occurs.
+
+2. riscv_plic_irq_enable() was called with the truncated value,
+   enabling PLIC source 0 instead of the intended source.
+
+3. No irq_enable() call existed in the init path. The PLIC source
+   was only (incorrectly) enabled per-pin in irq_set.
+
+4. RISC0/RISC1 per-pin enable registers have non-zero POR defaults
+   which cause an immediate ISR storm when the PLIC source is
+   unmasked without clearing them first.
+
+Fix by:
+- Splitting irq_num into raw PLIC source (for register config) and
+  multi-level encoded form (for irq_enable API)
+- Guarding config values with IS_INST_IRQ_EN to prevent bogus
+  irq_num for ports with multiple IRQs in SoC DTS
+- Moving PLIC enable to gpio_b91_init() with proper irq_enable()
+- Clearing all per-pin enables before unmasking the PLIC source
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+---
+ drivers/gpio/gpio_b91.c | 43 +++++++++++++++++++++++++++++++----------
+ 1 file changed, 33 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/gpio/gpio_b91.c b/drivers/gpio/gpio_b91.c
+index a791e0577b..7688ecd978 100644
+--- a/drivers/gpio/gpio_b91.c
++++ b/drivers/gpio/gpio_b91.c
+@@ -10,7 +10,6 @@
+ #include <zephyr/drivers/gpio.h>
+ #include <zephyr/irq.h>
+ #include <zephyr/drivers/gpio/gpio_utils.h>
+-#include <zephyr/drivers/interrupt_controller/riscv_plic.h>
+ 
+ 
+ /* Driver dts compatibility: telink,b91_gpio */
+@@ -20,7 +19,7 @@
+ #define GET_GPIO(dev)           ((volatile struct gpio_b91_t *)	\
+ 				 ((const struct gpio_b91_config *)dev->config)->gpio_base)
+ 
+-/* Get GPIO IRQ number defined in dts */
++/* Get GPIO raw PLIC source number (25/26/27) for register config */
+ #define GET_IRQ_NUM(dev)        (((const struct gpio_b91_config *)dev->config)->irq_num)
+ 
+ /* Get GPIO IRQ priority defined in dts */
+@@ -79,7 +78,8 @@ struct gpio_b91_t {
+ struct gpio_b91_config {
+ 	struct gpio_driver_config common;
+ 	uint32_t gpio_base;
+-	uint32_t irq_num;
++	uint32_t irq_num;          /* Raw PLIC source (25/26/27) for register config */
++	uint32_t irq_num_encoded;  /* Multi-level encoded IRQ for irq_enable() */
+ 	uint8_t irq_priority;
+ 	void (*pirq_connect)(void);
+ };
+@@ -165,7 +165,6 @@ void gpio_b91_irq_set(const struct device *dev, gpio_pin_t pin,
+ 	uint8_t irq_lvl = 0;
+ 	uint8_t irq_mask = 0;
+ 	uint8_t irq_num = GET_IRQ_NUM(dev);
+-	uint8_t irq_prioriy = GET_IRQ_PRIORITY(dev);
+ 	volatile struct gpio_b91_t *gpio = GET_GPIO(dev);
+ 
+ 	/* Get level and mask based on IRQ number */
+@@ -211,10 +210,6 @@ void gpio_b91_irq_set(const struct device *dev, gpio_pin_t pin,
+ 
+ 	/* Enable peripheral interrupt */
+ 	gpiob_b91_irq_en_set(dev, pin);
+-
+-	/* Enable PLIC interrupt */
+-	riscv_plic_irq_enable(irq_num);
+-	riscv_plic_set_priority(irq_num, irq_prioriy);
+ }
+ 
+ /* Set pin's pull-up/down resistor */
+@@ -301,6 +296,33 @@ static int gpio_b91_init(const struct device *dev)
+ 
+ 	cfg->pirq_connect();
+ 
++	/* Enable PLIC source for this port's IRQ.
++	 * IRQ_CONNECT (in pirq_connect) only registers the handler;
++	 * irq_enable() is needed to unmask the PLIC source.
++	 * irq_num == 0 means this port has no single-IRQ assignment.
++	 *
++	 * CRITICAL: Clear ALL per-pin interrupt enables for this IRQ source
++	 * across ALL 5 ports BEFORE enabling PLIC. RISC0/RISC1 enable
++	 * registers have non-zero POR defaults which would cause an
++	 * immediate ISR storm when the PLIC source is unmasked. */
++	if (cfg->irq_num != 0) {
++		for (int p = 0; p < 5; p++) {
++			if (cfg->irq_num == IRQ_GPIO) {
++				volatile struct gpio_b91_t *pgpio =
++					(volatile struct gpio_b91_t *)
++					(DT_REG_ADDR(DT_NODELABEL(gpioa)) +
++					 p * DT_REG_SIZE(DT_NODELABEL(gpioa)));
++				pgpio->irq_en = 0;
++			} else if (cfg->irq_num == IRQ_GPIO2_RISC0) {
++				*((volatile uint8_t *)REG_ADDR8(0x140338 + p)) = 0;
++			} else if (cfg->irq_num == IRQ_GPIO2_RISC1) {
++				*((volatile uint8_t *)REG_ADDR8(0x140340 + p)) = 0;
++			}
++		}
++		gpio_b91_irq_status_clr(cfg->irq_num);
++		irq_enable(cfg->irq_num_encoded);
++	}
++
+ 	return 0;
+ }
+ 
+@@ -545,8 +567,9 @@ static void gpio_b91_irq_connect_4(void)
+ 			.port_pin_mask = GPIO_PORT_PIN_MASK_FROM_DT_INST(n) \
+ 		},							    \
+ 		.gpio_base = DT_INST_REG_ADDR(n),			    \
+-		.irq_num = DT_INST_IRQN(n),				    \
+-		.irq_priority = DT_INST_IRQ(n, priority),		    \
++		.irq_num = IS_INST_IRQ_EN(n) ? DT_INST_IRQ(n, irq) : 0,   \
++		.irq_num_encoded = IS_INST_IRQ_EN(n) ? DT_INST_IRQN(n) : 0, \
++		.irq_priority = IS_INST_IRQ_EN(n) ? DT_INST_IRQ(n, priority) : 0, \
+ 		.pirq_connect = gpio_b91_irq_connect_##n		    \
+ 	};								    \
+ 	static struct gpio_b91_data gpio_b91_data_##n;			    \
+-- 
+2.53.0
+

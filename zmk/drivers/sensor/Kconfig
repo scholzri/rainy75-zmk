@@ -1,0 +1,8 @@
+config BATTERY_B91_ADC
+	bool "Telink B91 battery voltage sensor (SAR ADC)"
+	default n
+	depends on SOC_SERIES_TLSR951X
+	select SENSOR
+	help
+	  Battery voltage sensor using the B91's 10-channel SAR ADC.
+	  ADC channel and voltage divider ratio configured via devicetree.

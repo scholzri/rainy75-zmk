@@ -1,0 +1,9 @@
+/ {
+    behaviors {
+        rgb: rgb {
+            compatible = "rainy,behavior-rgb";
+            #binding-cells = <1>;
+            display-name = "Rainy RGB";
+        };
+    };
+};

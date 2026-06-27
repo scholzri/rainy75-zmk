@@ -1,0 +1,45 @@
+/* MCUboot DTS overlay for Rainy 75 Pro
+ * Single CDC ACM for serial recovery (mcumgr).
+ * Console/LOG disabled — serial recovery only.
+ * Disables peripherals not needed by bootloader.
+ */
+
+/ {
+	chosen {
+		/delete-property/ zephyr,bt-hci;
+		/delete-property/ zmk,underglow;
+		/delete-property/ zmk,kscan;
+		/delete-property/ zmk,matrix-transform;
+		/delete-property/ zmk,battery;
+	};
+};
+
+/* CDC ACM for MCUboot serial recovery.
+ * serial_adapter.c uses DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart). */
+&zephyr_udc0 {
+	cdc_acm_uart: cdc_acm_uart {
+		compatible = "zephyr,cdc-acm-uart";
+	};
+};
+
+&bt_hci {
+	status = "disabled";
+};
+
+&kscan0 {
+	status = "disabled";
+};
+
+&led_strip {
+	status = "disabled";
+};
+
+&battery {
+	status = "disabled";
+};
+
+&wdt0 {
+	status = "disabled";
+};
+
+/* USB ENABLED — needed for serial recovery */

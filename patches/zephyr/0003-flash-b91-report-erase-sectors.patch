@@ -1,0 +1,51 @@
+From f1243bb1e0059a4c66a8e3f11867d33b71874b1e Mon Sep 17 00:00:00 2001
+From: scholzri <33288574+scholzri@users.noreply.github.com>
+Date: Sun, 1 Mar 2026 19:49:13 +0100
+Subject: [PATCH] fix(flash): report erase-granularity sectors in B91 page
+ layout
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The B91 flash driver reported 256B programming pages as the page
+layout. MCUboot's flash_area_get_sectors() uses this to enumerate
+swap sectors — with 256B pages, a 456KB slot has 1,824 "sectors",
+overflowing BOOT_MAX_IMG_SECTORS (128 default). Report 4KB erase
+sectors instead (114 entries per slot), matching actual erase
+granularity.
+
+Without this fix, MCUboot can't validate images and falls through
+to serial recovery instead of booting the app.
+---
+ drivers/flash/soc_flash_b91.c | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/flash/soc_flash_b91.c b/drivers/flash/soc_flash_b91.c
+index af3823b8bd..b034cedfc1 100644
+--- a/drivers/flash/soc_flash_b91.c
++++ b/drivers/flash/soc_flash_b91.c
+@@ -202,11 +202,18 @@ flash_b91_get_parameters(const struct device *dev)
+ 	return &flash_b91_parameters;
+ }
+ 
+-/* API implementation: page_layout */
++/* API implementation: page_layout
++ *
++ * Report erase-granularity sectors (4KB) rather than programming pages (256B).
++ * MCUboot's flash_area_get_sectors() uses this to enumerate swap sectors, and
++ * swap operates at erase boundaries.  With 256B pages, a 456KB slot has 1824
++ * "sectors" which overflows BOOT_MAX_IMG_SECTORS (128 default).  Using 4KB
++ * erase sectors gives 114 entries per slot — fits comfortably.
++ */
+ #if defined(CONFIG_FLASH_PAGE_LAYOUT)
+ static const struct flash_pages_layout dev_layout = {
+-	.pages_count = FLASH_SIZE / PAGE_SIZE,
+-	.pages_size = PAGE_SIZE,
++	.pages_count = FLASH_SIZE / SECTOR_SIZE,
++	.pages_size = SECTOR_SIZE,
+ };
+ 
+ static void flash_b91_pages_layout(const struct device *dev,
+-- 
+2.53.0
+

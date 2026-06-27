@@ -1,0 +1,26 @@
+description: Telink B91 SAR ADC battery voltage sensor
+compatible: "telink,b91-battery-adc"
+
+properties:
+  adc-channel:
+    type: int
+    required: true
+    description: |
+      SAR ADC input mux code for the battery sense pin.
+      0x1=PB0, 0x2=PB1, ..., 0x8=PB7, 0x9=PD0, 0xA=PD1.
+  divider-numerator:
+    type: int
+    default: 3
+    description: Voltage divider numerator (3 for 3/4 divider)
+  divider-denominator:
+    type: int
+    default: 4
+    description: Voltage divider denominator (4 for 3/4 divider)
+  full-mv:
+    type: int
+    default: 4200
+    description: Battery voltage at 100% charge (millivolts)
+  empty-mv:
+    type: int
+    default: 3300
+    description: Battery voltage at 0% charge (millivolts)

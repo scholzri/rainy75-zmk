@@ -1,0 +1,69 @@
+From 877334151d19fe4adb7816c486f3ca6aa44ab72b Mon Sep 17 00:00:00 2001
+From: scholzri <33288574+scholzri@users.noreply.github.com>
+Date: Fri, 3 Apr 2026 17:11:29 +0200
+Subject: [PATCH] fix(boot): B91 RISC-V boot fixes for XIP, cache, and USB init
+
+- Fix do_boot() for RISC-V XIP: upstream groups RISC-V with Xtensa,
+  copying image to invalid SRAM address 0xBE030000. B91 boots from
+  flash directly.
+- Move boot_console_init() before DFU wait guard: on B91, USB init
+  has side effects (clock/DMA config) that the flash controller
+  needs for sustained reads during image hash verification.
+- Add fence.i before jumping to app (flush instruction cache).
+---
+ boot/zephyr/main.c | 23 +++++++++++++++++------
+ 1 file changed, 17 insertions(+), 6 deletions(-)
+
+diff --git a/boot/zephyr/main.c b/boot/zephyr/main.c
+index 3cebd286..fc315b47 100644
+--- a/boot/zephyr/main.c
++++ b/boot/zephyr/main.c
+@@ -260,7 +260,7 @@ static void do_boot(struct boot_rsp *rsp)
+ #endif
+ }
+ 
+-#elif defined(CONFIG_XTENSA) || defined(CONFIG_RISCV)
++#elif defined(CONFIG_XTENSA)
+ 
+ #ifndef CONFIG_SOC_FAMILY_ESPRESSIF_ESP32
+ 
+@@ -342,6 +342,14 @@ static void do_boot(struct boot_rsp *rsp)
+                      rsp->br_hdr->ih_hdr_size);
+ #endif
+ 
++    /* Flush instruction cache before jumping to app code.
++     * MCUboot and app share flash address space — stale cache
++     * entries could cause wrong instructions to execute.
++     */
++#ifdef CONFIG_RISCV
++    __asm__ volatile ("fence.i" ::: "memory");
++#endif
++
+     /* Lock interrupts and dive into the entry point */
+     irq_lock();
+     ((void (*)(void))start)();
+@@ -504,13 +512,16 @@ int main(void)
+     }
+ #endif
+ 
+-#ifdef CONFIG_BOOT_SERIAL_WAIT_FOR_DFU
+-    /* Initialize the boot console, so we can already fill up our buffers while
+-     * waiting for the boot image check to finish. This image check, can take
+-     * some time, so it's better to reuse thistime to already receive the
+-     * initial mcumgr command(s) into our buffers
++#ifdef CONFIG_MCUBOOT_SERIAL
++    /* Initialize console/USB early — on B91, boot_console_init() has
++     * side effects (usb_enable → clock/DMA config) that the flash
++     * controller needs for sustained reads during image hash.
++     * Without this, bootutil_img_hash() crashes after first iteration.
+      */
+     rc = boot_console_init();
++#endif
++
++#ifdef CONFIG_BOOT_SERIAL_WAIT_FOR_DFU
+     int timeout_in_ms = CONFIG_BOOT_SERIAL_WAIT_FOR_DFU_TIMEOUT;
+     uint32_t start = k_uptime_get_32();
+ 
+-- 
+2.53.0
+

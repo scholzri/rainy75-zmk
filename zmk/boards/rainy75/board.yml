@@ -1,0 +1,5 @@
+board:
+  name: rainy75
+  vendor: wobkey
+  socs:
+    - name: tlsr9518

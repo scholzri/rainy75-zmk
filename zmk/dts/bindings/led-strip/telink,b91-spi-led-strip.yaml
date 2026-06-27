@@ -1,0 +1,10 @@
+description: Telink B91 SPI-based WS2812 LED strip controller
+compatible: "telink,b91-spi-led-strip"
+
+include: led-strip.yaml
+
+properties:
+  chain-length:
+    type: int
+    required: true
+    description: Number of WS2812 LEDs in the strip

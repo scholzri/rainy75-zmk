@@ -1,0 +1,23 @@
+/*
+ * MCUmgr DFU over USB CDC ACM
+ *
+ * Defines the SINGLE CDC ACM UART, shared by mcumgr SMP transport AND the
+ * serial console (both chosen below). This deliberately replaces the Studio RPC
+ * snippet (-S studio-rpc-usb-uart): the B91's 256B USB SRAM fits only one CDC
+ * ACM next to HID, so adding Studio's CDC ACM would overflow it and kill USB
+ * enumeration entirely (EVK-only recovery). Studio runs over BLE GATT instead.
+ * See conf/app.conf "ZMK Studio" and docs/usage.md.
+ */
+
+/ {
+	chosen {
+		zephyr,uart-mcumgr = &mcumgr_cdc_acm;
+		zephyr,console = &mcumgr_cdc_acm;
+	};
+};
+
+&zephyr_udc0 {
+	mcumgr_cdc_acm: mcumgr_cdc_acm {
+		compatible = "zephyr,cdc-acm-uart";
+	};
+};

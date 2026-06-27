@@ -1,0 +1,13 @@
+config WDT_B91
+	bool "Telink B91 hardware watchdog driver"
+	default y
+	depends on SOC_SERIES_TLSR951X
+	select WDT
+	help
+	  Enable the hardware watchdog timer on Telink B91 SoCs.
+	  The watchdog resets the entire chip on timeout (no interrupt/callback).
+	  Clock source is PCLK (24 MHz). Max timeout ~11 seconds.
+
+module = WDT
+module-str = watchdog
+source "subsys/logging/Kconfig.template.log_config"
