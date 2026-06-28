@@ -1,0 +1,57 @@
+From c7fcd91af4c5ea950ea0eb0513f89255995564cf Mon Sep 17 00:00:00 2001
+From: Richard <33288574+scholzri@users.noreply.github.com>
+Date: Thu, 5 Mar 2026 23:10:10 +0100
+Subject: [PATCH] zmk: add ZMK_USB_NO_VBUS_DETECT for boards without VBUS
+ sensing
+
+Boards without a USB VBUS detection pin can't detect cable removal.
+The USB status stays at SUSPEND after unplug, so is_usb_power_present()
+always returns true and deep sleep never triggers.
+
+When CONFIG_ZMK_USB_NO_VBUS_DETECT is set, is_usb_power_present()
+always returns false, allowing the idle sleep timeout to trigger
+regardless of USB state.
+---
+ app/Kconfig        | 7 +++++++
+ app/src/activity.c | 4 ++--
+ 2 files changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/app/Kconfig b/app/Kconfig
+index e1c4ada9..700a05cd 100644
+--- a/app/Kconfig
++++ b/app/Kconfig
+@@ -404,6 +404,13 @@ config ZMK_IDLE_SLEEP_TIMEOUT
+     int "Milliseconds of inactivity before entering deep sleep"
+     default 900000
+ 
++config ZMK_USB_NO_VBUS_DETECT
++    bool "Board lacks USB VBUS detection"
++    help
++      When set, the idle sleep check ignores USB power state. Needed for
++      boards without a VBUS sense pin — otherwise the keyboard never
++      enters deep sleep because USB status stays at SUSPEND after unplug.
++
+ endif # ZMK_SLEEP
+ 
+ config ZMK_EXT_POWER
+diff --git a/app/src/activity.c b/app/src/activity.c
+index f4dc3562..2e1a14ed 100644
+--- a/app/src/activity.c
++++ b/app/src/activity.c
+@@ -31,11 +31,11 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
+ #endif
+ 
+ bool is_usb_power_present(void) {
+-#if IS_ENABLED(CONFIG_USB_DEVICE_STACK)
++#if IS_ENABLED(CONFIG_USB_DEVICE_STACK) && !IS_ENABLED(CONFIG_ZMK_USB_NO_VBUS_DETECT)
+     return zmk_usb_is_powered();
+ #else
+     return false;
+-#endif /* IS_ENABLED(CONFIG_USB_DEVICE_STACK) */
++#endif
+ }
+ 
+ static enum zmk_activity_state activity_state;
+-- 
+2.54.0
+

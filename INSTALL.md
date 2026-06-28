@@ -131,6 +131,12 @@ documented in **[docs/zmk-firmware.md](docs/zmk-firmware.md)**. In short:
 - The **Telink BLE blob** is **not in this repo** (proprietary — see [NOTICE](NOTICE));
   `build.sh` auto-fetches it (`fetch_ble_blob.sh`, pinned + SHA-256 verified) on the first
   build, so the initial build needs network access.
+- **One-time west setup** after `west update` — install the Python deps and export the
+  Zephyr CMake package, or the build won't configure:
+  ```bash
+  pip install -r zephyr/scripts/requirements.txt
+  west zephyr-export
+  ```
 
 Then:
 

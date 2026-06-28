@@ -7,7 +7,11 @@ manifest:
   projects:
     - name: zmk
       remote: zmkfirmware
-      revision: 64daf698e073e37b6748ac54f4eb48d8666af0b9
+      # Reachable upstream ZMK. Our one local change (ZMK_USB_NO_VBUS_DETECT, needed
+      # for battery deep sleep) is carried as patches/zmk-src/0001 and applied by
+      # build.sh — this pin + that patch == the exact source this firmware was built
+      # and tested against. Bump the two together if you move the pin.
+      revision: 27afcb11efff6345d0ceb875e85c2de0673123f6
       path: zmk-src
       import: app/west.yml
     - name: hal_telink

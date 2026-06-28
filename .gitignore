@@ -2,11 +2,14 @@
 build/
 build-mcuboot/
 
-# West workspace (fetched by west update)
-zmk-src/
+# West workspace (fetched by west update). Anchored to repo root so these never
+# shadow same-named paths elsewhere — e.g. a bare `zmk-src/` also ignores
+# `patches/zmk-src/` (same class of bug as the `zephyr/` → `zmk/zephyr/` one in #1).
+/zmk-src/
 /zephyr/
-modules/
-bootloader/
+/modules/
+/bootloader/
+/optional/
 .west/
 
 # Python
