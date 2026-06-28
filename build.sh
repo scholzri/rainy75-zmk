@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build ZMK firmware for Rainy 75 Pro
-# Usage: ./build.sh [-p] [-v] [-m] [-c] [-o] [-b] [-a]
+# Usage: ./build.sh [-p] [-v] [-m] [-c] [-o] [-b] [-a] (--iso | --ansi)
 #   -p  pristine build (clean rebuild)
 #   -v  verbose output
 #   -m  build MCUboot bootloader
@@ -8,6 +8,8 @@
 #   -o  create OTA-ready image (combined + Telink header + CRC32)
 #   -b  build OTA bridge (monolithic, for stock-to-ZMK transition)
 #   -a  all: MCUboot + app + combined + OTA + bridge
+#   --iso / --ansi   physical layout, REQUIRED for any app build (no default)
+#                    e.g. ./build.sh -pa --iso   or   ./build.sh -pa --ansi
 
 set -e
 
@@ -23,6 +25,8 @@ BUILD_COMBINED=0
 BUILD_OTA=0
 BUILD_BRIDGE=0
 BUILD_APP=1
+LAYOUT=""             # "iso" or "ansi" — REQUIRED for app builds, no default
+ANSI_DTFLAG=""        # set when LAYOUT=ansi
 
 # ── Apply upstream patches if needed ──────────────────────────
 apply_patches() {
@@ -47,7 +51,15 @@ apply_patches zmk-src zmk-src
 # ── Fetch the (non-redistributable) Telink BLE blob if missing ──
 ./fetch_ble_blob.sh
 
-while getopts "pvmcoba" opt; do
+# Allow long forms --iso / --ansi as aliases for -I / -A.
+ARGS=(); for a in "$@"; do case "$a" in
+    --iso)  ARGS+=("-I");;
+    --ansi) ARGS+=("-A");;
+    *)      ARGS+=("$a");;
+esac; done
+set -- "${ARGS[@]}"
+
+while getopts "pvmcobaIA" opt; do
     case $opt in
         p) PRISTINE="-p" ;;
         v) VERBOSE_CMAKE="-DCMAKE_VERBOSE_MAKEFILE=ON" ;;
@@ -56,9 +68,20 @@ while getopts "pvmcoba" opt; do
         o) BUILD_OTA=1 ;;
         b) BUILD_BRIDGE=1; BUILD_APP=0 ;;
         a) BUILD_MCUBOOT=1; BUILD_COMBINED=1; BUILD_OTA=1; BUILD_BRIDGE=1; BUILD_APP=1 ;;
-        *) echo "Usage: $0 [-p] [-v] [-m] [-c] [-o] [-b] [-a]"; exit 1 ;;
+        I) [ "$LAYOUT" = ansi ] && { echo "Error: --iso and --ansi are mutually exclusive" >&2; exit 1; }; LAYOUT="iso" ;;
+        A) [ "$LAYOUT" = iso  ] && { echo "Error: --iso and --ansi are mutually exclusive" >&2; exit 1; }; LAYOUT="ansi"; ANSI_DTFLAG="-DDTS_EXTRA_CPPFLAGS=-DRAINY75_ANSI" ;;
+        *) echo "Usage: $0 [-p] [-v] [-m] [-c] [-o] [-b] [-a] (--iso | --ansi)"; exit 1 ;;
     esac
 done
+
+# The app build needs an explicit physical layout — no silent default (an ANSI
+# owner must not get an ISO build by accident, and vice-versa).
+if [ "$BUILD_APP" -eq 1 ] && [ -z "$LAYOUT" ]; then
+    echo "Error: choose a layout for the app build: --iso or --ansi" >&2
+    echo "  ./build.sh -pa --iso    # ISO DE  (the original board)" >&2
+    echo "  ./build.sh -pa --ansi   # ANSI    (community-verified)" >&2
+    exit 1
+fi
 
 # ── MCUboot build ──────────────────────────────────────────────
 if [ "$BUILD_MCUBOOT" -eq 1 ]; then
@@ -81,12 +104,13 @@ fi
 
 # ── App build ──────────────────────────────────────────────────
 if [ "$BUILD_APP" -eq 1 ]; then
-    echo "=== Building ZMK app ==="
+    echo "=== Building ZMK app (${LAYOUT^^} layout) ==="
     west build $PRISTINE -b rainy75 zmk-src/app -- \
         -DZMK_CONFIG="$(pwd)/zmk/boards/rainy75" \
         -DZMK_EXTRA_MODULES="$(pwd)/zmk" \
         -DEXTRA_CONF_FILE="$(pwd)/conf/app.conf" \
         -DEXTRA_DTC_OVERLAY_FILE="$(pwd)/zmk/boards/rainy75/rainy75.keymap;$(pwd)/conf/mcumgr.overlay" \
+        $ANSI_DTFLAG \
         $VERBOSE_CMAKE
 fi
 

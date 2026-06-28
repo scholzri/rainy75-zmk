@@ -5,10 +5,10 @@ fixes, layout variants, and documentation are all welcome.
 
 ## Especially wanted
 
-- **ANSI layout verification.** This board ships in both ISO and ANSI variants. The
-  firmware was developed and hardware-tested on **ISO DE**. ANSI support is being added
-  but needs someone with an **ANSI** board to confirm the keymap and per-key RGB mapping
-  on real hardware — see [the layout note below](#layout-variants-iso--ansi).
+- **ANSI per-key RGB.** This board ships in both ISO and ANSI variants. ANSI is supported,
+  and its keymap + matrix were verified on real hardware by a contributor; the one piece
+  still unconfirmed is the per-key **RGB** mapping around the Enter cluster — see [the
+  layout note below](#layout-variants-iso--ansi).
 - **Other regional ISO layouts** (UK, Nordic, …) — mostly a keymap change.
 - **Sibling boards** on the same Evision/Telink platform (CIDOO, IQUNIX, Ajazz,
   EPOMAKER — see [docs/evision-platform.md](docs/evision-platform.md)).
@@ -28,8 +28,8 @@ The full toolchain is described in [docs/zmk-firmware.md](docs/zmk-firmware.md).
 Build and test:
 
 ```bash
-./build.sh -a                                   # MCUboot + app + combined + OTA + bridge
-./build.sh -p                                   # pristine app rebuild
+./build.sh -a --iso                             # MCUboot + app + combined + OTA + bridge (--ansi for ANSI)
+./build.sh -p --iso                             # pristine app rebuild
 ./zmk/src/rainy_rgb/tests/run_host_tests.sh     # host unit tests (color/effects/overlay)
 ```
 
@@ -62,7 +62,7 @@ Keep this boundary: prefer a new file under `zmk/` over editing fetched sources 
 ## Testing & verification
 
 - **Host tests must pass:** `run_host_tests.sh` for anything touching the engine.
-- **Builds must be clean:** `./build.sh -a`.
+- **Builds must be clean:** `./build.sh -a --iso` (and `--ansi` if you touched the layout).
 - **Hardware-affecting changes** (drivers, pins, timing, power, BLE) should be verified on
   a real board, and the PR should say how (what you observed: USB enumerates, BLE pairs,
   LEDs render correctly, no regressions, etc.). If you can't test on hardware, say so —
@@ -79,24 +79,28 @@ Keep this boundary: prefer a new file under `zmk/` over editing fetched sources 
 
 ## Layout variants (ISO / ANSI)
 
-An **experimental ANSI variant** already exists: build with `-DCONFIG_RAINY75_ANSI=y`
-(see [INSTALL.md](INSTALL.md#ansi-layout-experimental-untested)). It drops the ISO `<>`
-key (full-width Left-Shift) and remaps the Enter / backslash area in
-`zmk/boards/rainy75/rainy75.keymap` (the `K_ENTER_TOP` / `K_HASH` / `K_LT_GT` macros).
+Both layouts are supported; pick one at build time — there is **no default**:
 
-It was derived from the vendor VIA layout
-([trkw/rainy75-v2-json](https://github.com/trkw/rainy75-v2-json)) but is **not verified on
-real ANSI hardware**. What needs confirming on an actual ANSI board:
+```bash
+./build.sh -a --iso     # ISO DE
+./build.sh -a --ansi    # ANSI
+```
 
-- **The Enter / backslash matrix mapping.** The vendor VIA places the ANSI Enter on a
-  matrix node our ISO transform skips (`RC(3,13)`), while our ISO Enter is `RC(2,13)`.
-  The current variant assumes ANSI reuses the ISO switches (Enter→`RC(3,12)`,
-  backslash→`RC(2,13)`); if the ANSI board instead populates `RC(3,13)`, the board's
-  `matrix-transform` in `rainy75.dts` needs a small change too.
-- **The per-key RGB `led_map`** near Enter (the spatial effects use XY positions).
+ANSI drops the ISO `<>` key (full-width Left-Shift) and remaps the Enter / backslash area
+via the `K_ENTER_TOP` / `K_HASH` / `K_LT_GT` macros in `rainy75.keymap`, plus a conditional
+row in the matrix transform in `rainy75.dts`. Selection rides the devicetree-preprocessor
+symbol `RAINY75_ANSI` (`--ansi` passes `-DDTS_EXTRA_CPPFLAGS=-DRAINY75_ANSI`) — a Kconfig
+`#ifdef` can't drive it, because devicetree is preprocessed before Kconfig runs.
 
-If you have an **ANSI** Rainy 75, please test and open an issue or PR — that's the one
-thing blocking first-class ANSI support.
+The keymap + matrix positions were **verified on real ANSI hardware** by
+[@jaxx2104](https://github.com/jaxx2104) ([#1](https://github.com/scholzri/rainy75-zmk/issues/1)):
+the wide Enter is `RC(3,13)`, the key above it is Backslash (`RC(2,13)`), and the ISO `<>`
+slot (`RC(4,1)`) is unpopulated. (Originally derived from the vendor VIA layout,
+[trkw/rainy75-v2-json](https://github.com/trkw/rainy75-v2-json).)
+
+**Still open:** the per-key RGB `led_map` near Enter (the spatial effects use XY positions).
+If you run ANSI, confirming the LEDs light the right physical keys around the Enter cluster
+would close this out — please open an issue or PR.
 
 ## Licensing
 

@@ -5,11 +5,20 @@
 #include <dt-bindings/zmk/bt.h>
 #include <dt-bindings/zmk/outputs.h>
 
-/* ── Physical layout: ISO (default) or ANSI (CONFIG_RAINY75_ANSI) ──
- * ANSI drops the ISO <> key (full-width Left-Shift) and shifts the Enter block:
- * the ISO Enter position becomes Backslash, and the ISO #~ (NUHS) position
- * becomes the wide Enter. UNVERIFIED on real ANSI hardware — see CONTRIBUTING.md. */
-#ifdef CONFIG_RAINY75_ANSI
+/* ── Physical layout: ISO (default) or ANSI ──
+ * Build ANSI with `./build.sh --ansi` (it passes -DDTS_EXTRA_CPPFLAGS=-DRAINY75_ANSI
+ * to the devicetree preprocessor, which is how both this keymap and the matrix
+ * transform in rainy75.dts see RAINY75_ANSI). A Kconfig `#ifdef CONFIG_RAINY75_ANSI`
+ * can't work here: devicetree is preprocessed before Kconfig runs, so the symbol is
+ * undefined and ISO was always emitted — caught by @jaxx2104, who also verified the
+ * matrix positions below on real ANSI hardware.
+ *
+ * ANSI vs ISO around Enter:
+ *   - QWERTY-row end RC(2,13):  ISO Enter         -> ANSI Backslash
+ *   - home-row slot:            ISO #~ @ RC(3,12) -> ANSI wide Enter @ RC(3,13)
+ *                               (rainy75.dts swaps the matrix cell for this slot)
+ *   - bottom-row RC(4,1):       ISO <> (NUBS)     -> absent on ANSI */
+#ifdef RAINY75_ANSI
 #define K_ENTER_TOP  &kp BSLH   /* ISO Enter (top) -> ANSI backslash */
 #define K_HASH       &kp RET    /* ISO #~ (NUHS)   -> ANSI wide Enter */
 #define K_LT_GT      &none      /* ISO <> (NUBS)   -> absent on ANSI */

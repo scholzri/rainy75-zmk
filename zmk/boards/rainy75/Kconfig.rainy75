@@ -2,12 +2,8 @@ config BOARD_RAINY75
 	select SOC_TLSR9518
 	select HAS_POWEROFF
 
-config RAINY75_ANSI
-	bool "ANSI physical layout (UNTESTED)"
-	default n
-	help
-	  Build the ANSI keymap variant instead of the default ISO. ANSI removes the
-	  ISO <> key (full-width Left-Shift) and remaps the Enter / backslash area.
-	  Derived from the vendor VIA layout but NOT verified on real ANSI hardware —
-	  if you have an ANSI Rainy 75, please verify and report (see CONTRIBUTING.md).
-	  Build with: -DCONFIG_RAINY75_ANSI=y
+# Note: the ISO/ANSI physical layout is NOT a Kconfig option. A Kconfig symbol
+# can't drive it, because the keymap + matrix transform are devicetree, which is
+# preprocessed before Kconfig runs. ANSI is selected via the devicetree
+# preprocessor symbol RAINY75_ANSI — build with `./build.sh --ansi` (which passes
+# -DDTS_EXTRA_CPPFLAGS=-DRAINY75_ANSI). See rainy75.keymap / rainy75.dts.

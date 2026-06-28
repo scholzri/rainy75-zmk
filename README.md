@@ -120,11 +120,11 @@ read on their own.
 | **Install this ZMK firmware** | `./install_zmk.sh` — two-stage OTA → mcumgr, no debugger. Full guide: [INSTALL.md](INSTALL.md). |
 | **Use it — controls, Bluetooth, Studio** | [docs/usage.md](docs/usage.md) — Fn-layer, BT profiles + reset, live keymap editing via ZMK Studio. |
 | **Go back to stock** | `./restore_stock.sh` — see [INSTALL.md](INSTALL.md#3-go-back-to-stock). |
-| **Build from source** | `./build.sh -a` (Zephyr SDK 0.17.0 + west). See [INSTALL.md](INSTALL.md#4-build-from-source). |
+| **Build from source** | `./build.sh -a --iso` (or `--ansi`; Zephyr SDK 0.17.0 + west). See [INSTALL.md](INSTALL.md#4-build-from-source). |
 | **Recover a bricked board** | Telink burning board over the SWS pads — [docs/recovery.md](docs/recovery.md). |
 | **Open the case / service the battery** | Photo teardown walkthrough — [docs/teardown.md](docs/teardown.md). |
 | **Customize the keymap / RGB** | Edit `zmk/boards/rainy75/rainy75.keymap`; RGB controls in [docs/rainy-rgb.md](docs/rainy-rgb.md). |
-| **Use the ANSI layout** | Build with `-DCONFIG_RAINY75_ANSI=y` — experimental/untested, see [INSTALL.md](INSTALL.md#ansi-layout-experimental-untested). |
+| **Use the ANSI layout** | `./build.sh -a --ansi` — keymap verified on real ANSI hardware (per-key RGB near Enter still being confirmed), see [INSTALL.md](INSTALL.md#ansi-layout). |
 | **Contribute** | [CONTRIBUTING.md](CONTRIBUTING.md). |
 
 ---
@@ -152,8 +152,9 @@ lighting engine: [docs/rainy-rgb.md](docs/rainy-rgb.md).
   isn't reverse-engineered or implemented here. This firmware is **USB + BLE only**.
 - **Battery percentage** — the battery ADC (pin / divider / Vref) isn't hardware-validated,
   so the gauge is approximate.
-- **ANSI layout** — experimental and unverified on real hardware
-  ([help wanted](CONTRIBUTING.md#layout-variants-iso--ansi)).
+- **ANSI layout** — supported (`./build.sh --ansi`); keymap + matrix verified on real ANSI
+  hardware by a contributor. The per-key **RGB** mapping around the Enter cluster is the
+  one piece still being confirmed ([details](CONTRIBUTING.md#layout-variants-iso--ansi)).
 
 ---
 
@@ -207,12 +208,12 @@ Issues and pull requests are welcome — keymap tweaks, new RGB effects, sibling
 ports, driver fixes, and documentation all help. See **[CONTRIBUTING.md](CONTRIBUTING.md)**
 for the build/test/PR workflow and the code layout.
 
-- **Build before submitting:** `./build.sh -a` and run the engine host tests
-  (`./zmk/src/rainy_rgb/tests/run_host_tests.sh`).
+- **Build before submitting:** `./build.sh -a --iso` (and `--ansi`) and run the engine host
+  tests (`./zmk/src/rainy_rgb/tests/run_host_tests.sh`).
 - **Keep it out-of-tree:** new functionality lives under `zmk/`, so the ZMK pin can be
   bumped without losing it.
-- **ANSI / other layouts:** if you have an ANSI board, help verify the layout — see
-  [CONTRIBUTING.md](CONTRIBUTING.md#layout-variants-iso--ansi).
+- **ANSI / other layouts:** if you have an ANSI board, help confirm the per-key RGB near
+  Enter — see [CONTRIBUTING.md](CONTRIBUTING.md#layout-variants-iso--ansi).
 
 ---
 

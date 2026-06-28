@@ -79,7 +79,7 @@ Keep that file safe. `restore_stock.sh` needs it.
 With the keyboard plugged in on stock firmware:
 
 ```bash
-./build.sh -a          # build the images (section 4) — fetches the BLE blob, then builds
+./build.sh -a --iso    # build the images (section 4); use --ansi for the ANSI layout
 ./install_zmk.sh       # interactive — explains each step and asks before writing
 ```
 
@@ -141,8 +141,8 @@ documented in **[docs/zmk-firmware.md](docs/zmk-firmware.md)**. In short:
 Then:
 
 ```bash
-./build.sh -a     # MCUboot + ZMK app + combined.bin + OTA + bridge
-./build.sh -p     # pristine app rebuild
+./build.sh -a --iso     # MCUboot + ZMK app + combined.bin + OTA + bridge (--ansi for ANSI)
+./build.sh -p --iso     # pristine app rebuild
 ```
 
 Outputs: `build/combined.bin`, `build-bridge/bridge_ota.bin`, and
@@ -156,23 +156,21 @@ mcumgr --conntype serial --connstring "dev=/dev/ttyACM0,baud=115200" image test 
 mcumgr --conntype serial --connstring "dev=/dev/ttyACM0,baud=115200" reset
 ```
 
-### ANSI layout (experimental, untested)
+### ANSI layout
 
-The default build is **ISO**. For the **ANSI** physical layout (full-width Left-Shift,
-no `<>` key, wide Enter), add `-DCONFIG_RAINY75_ANSI=y`:
+Pass `--iso` or `--ansi` to any app build — there is **no default**, so an ANSI board
+can't silently get an ISO build (or vice-versa):
 
 ```bash
-west build -p -b rainy75 -d build-ansi zmk-src/app -- \
-    -DZMK_CONFIG="$(pwd)/zmk/boards/rainy75" -DZMK_EXTRA_MODULES="$(pwd)/zmk" \
-    -DEXTRA_CONF_FILE="$(pwd)/conf/app.conf" \
-    -DEXTRA_DTC_OVERLAY_FILE="$(pwd)/zmk/boards/rainy75/rainy75.keymap;$(pwd)/conf/mcumgr.overlay" \
-    -DCONFIG_RAINY75_ANSI=y
+./build.sh -a --ansi      # ANSI
+./build.sh -a --iso       # ISO DE
 ```
 
-> ⚠️ ANSI support is **derived from the vendor VIA layout but not verified on real ANSI
-> hardware** — the Enter / backslash matrix mapping in particular still needs confirming.
-> If you have an ANSI Rainy 75, please test it and report back
-> ([CONTRIBUTING.md](CONTRIBUTING.md#layout-variants-iso--ansi)).
+ANSI puts the wide **Enter** on its real matrix cell `RC(3,13)`, makes the key above it
+**Backslash**, and drops the ISO `<>` key. These matrix positions were **verified on real
+ANSI hardware** by [@jaxx2104](https://github.com/jaxx2104) (issue #1). Still being
+confirmed: the per-key **RGB** mapping around the Enter cluster — if you run ANSI, reports
+welcome ([CONTRIBUTING.md](CONTRIBUTING.md#layout-variants-iso--ansi)).
 
 ---
 

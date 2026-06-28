@@ -9,7 +9,7 @@
 #
 # Prerequisites:
 #   - Keyboard connected via USB, running stock firmware (VID 320f:5055)
-#   - Build everything:  ./build.sh -a
+#   - Build everything:  ./build.sh -a --iso   (or --ansi for the ANSI layout)
 #
 # Usage:
 #   ./install_zmk.sh              # interactive (asks for confirmation)
@@ -61,7 +61,7 @@ done
 
 # ── Validate prerequisites ───────────────────────────────────
 for f in "$BRIDGE_IMAGE" "$ZMK_IMAGE"; do
-    [[ -f "$f" ]] || die "Required file not found: $f (run ./build.sh -a first)"
+    [[ -f "$f" ]] || die "Required file not found: $f (run ./build.sh -a --iso first, or --ansi)"
 done
 
 check_usb() {

@@ -158,13 +158,15 @@ west update
 ### Build (recommended)
 
 ```bash
-./build.sh -a    # MCUboot + app + combined image (first build or after west update)
-./build.sh       # app only (incremental)
-./build.sh -p    # app pristine (after Kconfig/DTS changes)
-./build.sh -pa   # full pristine rebuild
+# App builds need a physical-layout flag — --iso or --ansi (no default).
+./build.sh -a --iso    # MCUboot + app + combined image (first build or after west update)
+./build.sh --iso       # app only (incremental)
+./build.sh -p --iso    # app pristine (after Kconfig/DTS changes)
+./build.sh -pa --ansi  # full pristine rebuild, ANSI layout
 ```
 
 `build.sh` handles venv activation, SDK path, patch application, DTS overlays, and combined image creation.
+The layout flag passes `-DDTS_EXTRA_CPPFLAGS=-DRAINY75_ANSI` for ANSI; `mcuboot`/`bridge`-only builds need no flag.
 
 ### Build (manual)
 
