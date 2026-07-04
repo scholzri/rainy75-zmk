@@ -69,7 +69,7 @@ while getopts "pvmcobaIA" opt; do
         b) BUILD_BRIDGE=1; BUILD_APP=0 ;;
         a) BUILD_MCUBOOT=1; BUILD_COMBINED=1; BUILD_OTA=1; BUILD_BRIDGE=1; BUILD_APP=1 ;;
         I) [ "$LAYOUT" = ansi ] && { echo "Error: --iso and --ansi are mutually exclusive" >&2; exit 1; }; LAYOUT="iso" ;;
-        A) [ "$LAYOUT" = iso  ] && { echo "Error: --iso and --ansi are mutually exclusive" >&2; exit 1; }; LAYOUT="ansi"; ANSI_DTFLAG="-DDTS_EXTRA_CPPFLAGS=-DRAINY75_ANSI" ;;
+        A) [ "$LAYOUT" = iso  ] && { echo "Error: --iso and --ansi are mutually exclusive" >&2; exit 1; }; LAYOUT="ansi"; ANSI_DTFLAG="-DDTS_EXTRA_CPPFLAGS=-DRAINY75_ANSI -DCONFIG_RAINY_RGB_ANSI_LEDMAP=y" ;;
         *) echo "Usage: $0 [-p] [-v] [-m] [-c] [-o] [-b] [-a] (--iso | --ansi)"; exit 1 ;;
     esac
 done

@@ -40,3 +40,14 @@ config RAINY_RGB
 	help
 	  Custom WS2812 lighting engine (effects, reactivity, per-key) that
 	  replaces ZMK's rgb_underglow. Owns the led_strip device directly.
+
+config RAINY_RGB_ANSI_LEDMAP
+	bool "ANSI LED map (strip has no LED at the ISO <> slot)"
+	depends on RAINY_RGB
+	default n
+	help
+	  The ANSI PCB's WS2812 chain omits the LED under the ISO <> (NUBS)
+	  key, so every LED after Left Shift sits one chain index earlier
+	  than on the ISO strip (and the last ISO index does not exist).
+	  Selects the ANSI-calibrated pos_to_led/XY tables in led_map.c.
+	  Set automatically by ./build.sh --ansi.
