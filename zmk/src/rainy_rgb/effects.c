@@ -166,6 +166,26 @@ void fx_heatmap(struct rgb_frame *f) {
     }
 }
 
+
+/* Speed-colour (after the stock firmware's "Trigger Colour" mode): the whole
+ * board wears one colour whose depth tracks typing speed. The decaying per-LED
+ * key_heat[] summed over the board is the speed signal — idle settles to a
+ * pale, dimmer tint; fast typing drives saturation and brightness toward the
+ * full vivid colour. Hue/sat/val knobs still apply (hue picks the colour,
+ * sat/val cap the deep end). */
+void fx_speed_colour(struct rgb_frame *f) {
+    uint32_t total = 0;
+    if (f->key_heat) {
+        for (uint16_t i = 0; i < f->n; i++) { total += f->key_heat[i]; }
+    }
+    /* ~6 keys' worth of fresh heat reaches full depth (steady fast typing) */
+    uint8_t depth = (total >= 1530) ? 255 : (uint8_t)(total / 6);
+    uint8_t sat = scale8(f->sat, (uint8_t)(80 + scale8(175, depth)));
+    uint8_t val = scale8(f->val, (uint8_t)(96 + scale8(159, depth)));
+    struct rrgb col = hsv2rgb(f->hue, sat, val);
+    for (uint16_t i = 0; i < f->n; i++) { f->px[i] = col; }
+}
+
 const struct rrgb_effect rrgb_effects[] = {
     { "solid",      fx_solid },
     { "rainbow",    fx_rainbow_wave },
@@ -178,5 +198,6 @@ const struct rrgb_effect rrgb_effects[] = {
     { "wave",       fx_wave },
     { "rain",       fx_rain },
     { "heatmap",    fx_heatmap },
+    { "speedcolour", fx_speed_colour },
 };
 const uint16_t rrgb_effect_count = sizeof(rrgb_effects) / sizeof(rrgb_effects[0]);

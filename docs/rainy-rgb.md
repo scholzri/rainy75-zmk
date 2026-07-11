@@ -13,7 +13,7 @@ Hardware-verified end to end on the physical keyboard (USB + BLE, mcuboot DFU).
 | File | Responsibility |
 |------|----------------|
 | `color.{h,c}` | Pure 8-bit color math: `hsv2rgb`, `sin8`, `scale8`, `hypot8`. Host-tested. |
-| `effects.{h,c}` | `struct rgb_frame`, the effect registry, and all 11 effect render functions. Pure. |
+| `effects.{h,c}` | `struct rgb_frame`, the effect registry, and all 12 effect render functions. Pure. |
 | `engine.{h,c}` | Owns `pixels[83]` + a dedicated **50 FPS render thread**; runtime state; the FPS-independent speed model; settings load; dispatch (effect → overlay → strip). |
 | `reactive.{h,c}` | Lock-free **SPSC press queue** (event thread → render thread) feeding an 8-slot ripple pool + per-LED `key_heat[83]`. |
 | `overlay.{h,c}` | Functional indicators (CapsLock / Fn-highlight / battery gauge). Pure, ZMK-free. |
@@ -42,12 +42,12 @@ guards against a missed IRQ). It still runs only on the dedicated low-priority
 render thread, never from an ISR/event callback. Frame rate is 50 FPS
 (deadline-paced); the thread is preemptible by BLE/system threads.
 
-## Effects (11, cycle with Fn+Enter)
+## Effects (12, cycle with Fn+Enter)
 
-`solid · rainbow · plasma · twinkle · comet · aurora · reactive · ripple · wave · rain · heatmap`
+`solid · rainbow · plasma · twinkle · comet · aurora · reactive · ripple · wave · rain · heatmap · speedcolour`
 
 - **Ambient:** solid, rainbow, plasma, twinkle, comet, aurora, wave (diagonal), rain (drops fall by Y).
-- **Reactive:** reactive (global pulse on keypress), ripple (concurrent rainbow rings expanding from the pressed key), heatmap (keys glow on press, cool over time).
+- **Reactive:** reactive (global pulse on keypress), ripple (concurrent rainbow rings expanding from the pressed key), heatmap (keys glow on press, cool over time), speedcolour (board-wide colour deepens with typing speed — after the stock firmware's *Trigger Colour* mode; hue picks the colour, sat/val cap the deep end).
 - `fire` and `calibrate` existed earlier and were removed on request.
 
 Spatial effects (ripple/wave/rain/heatmap) use the calibrated `led_positions[]` XY map.

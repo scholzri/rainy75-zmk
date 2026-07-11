@@ -43,5 +43,6 @@ void fx_ripple(struct rgb_frame *f);
 void fx_wave(struct rgb_frame *f);
 void fx_rain(struct rgb_frame *f);
 void fx_heatmap(struct rgb_frame *f);
+void fx_speed_colour(struct rgb_frame *f);
 
 #endif
