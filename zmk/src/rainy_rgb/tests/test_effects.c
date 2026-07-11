@@ -100,9 +100,26 @@ int main(void) {
         struct rgb_frame nf = { .px=pxh, .n=3, .key_heat=0 };
         fx_heatmap(&nf); CHECK((pxh[0].r|pxh[0].g|pxh[0].b)==0);  /* NULL-safe */
     }
-    /* registry: 11 effects (fire + calibrate removed) */
-    CHECK(rrgb_effect_count == 11);
-    CHECK(rrgb_effects[rrgb_effect_count-1].render == fx_heatmap);
+    /* speedcolour: colour depth tracks total key heat — idle is paler and
+       dimmer than a typing burst; whole board wears one colour; NULL-safe */
+    {
+        uint8_t idle[3] = { 0, 0, 0 }, burst[3] = { 255, 255, 255 };
+        struct rrgb pxs[3];
+        struct rgb_frame sf = { .px=pxs, .n=3, .hue=0, .sat=255, .val=255, .key_heat=idle };
+        fx_speed_colour(&sf);
+        CHECK((pxs[0].r|pxs[0].g|pxs[0].b) != 0);            /* idle = tint, not black */
+        CHECK(memcmp(&pxs[0], &pxs[2], sizeof(pxs[0])) == 0); /* uniform */
+        uint8_t idle_r = pxs[0].r, idle_g = pxs[0].g;
+        sf.key_heat = burst; fx_speed_colour(&sf);
+        CHECK(pxs[0].r > idle_r);                            /* deeper red at speed */
+        CHECK(pxs[0].g < idle_g || idle_g == 0);             /* more saturated */
+        sf.key_heat = 0; fx_speed_colour(&sf);               /* NULL-safe: idle tint */
+        CHECK(pxs[0].r == idle_r);
+    }
+
+    /* registry: 12 effects (fire + calibrate removed, speedcolour added) */
+    CHECK(rrgb_effect_count == 12);
+    CHECK(rrgb_effects[rrgb_effect_count-1].render == fx_speed_colour);
 
     DONE();
 }
