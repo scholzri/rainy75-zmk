@@ -140,9 +140,45 @@ distrobox enter arch -- bash -c "./zmk/src/rainy_rgb/tests/run_host_tests.sh"  #
 Render thread owns `pixels[]`, the ripple pool, and `key_heat[]`. The ZMK event
 thread only **produces** (SPSC press queue append; single-byte/word `volatile`
 overlay state writes). Single-core RISC-V → benign races by design, no locks.
+The host direct-pixel buffer follows the same pattern: the mcumgr (SMP) thread
+writes `host_px[]` + a `volatile` flag, the render thread copies it per frame —
+a torn write is a one-frame glitch at 50 FPS.
+
+## Host control (`rgb_mgmt`, mcumgr group 65)
+
+With `CONFIG_RGB_MGMT=y` a host script can drive the pixels directly over the
+same SMP transport as DFU (USB CDC-ACM serial). Group 65, four commands:
+
+| ID | Command | Payload | Effect |
+|----|---------|---------|--------|
+| 0 | set   | `{"px": bstr}` — quads of `[keymap_position, r, g, b]` | light specific keys; first set after normal mode starts from black; later sets are incremental |
+| 1 | fill  | `{"r","g","b"}` | whole board one color |
+| 2 | clear | `{}` | exit host mode, back to the normal effect |
+| 3 | info  | (read) | `{"n": 83, "host": bool}` |
+
+Positions are **keymap positions** (0..82, row-major), translated through
+`led_map` on the device — the same host code works on ISO and ANSI boards.
+Host mode is not persisted (reboot/deep sleep return to the normal effect),
+functional overlays (CapsLock / Fn-highlight / battery) still render on top,
+and **any physical Fn+RGB control exits host mode** — a stray script can never
+lock the user out of their lighting.
+
+Host-side client: [`reverse/tools/rainy75_rgb.py`](../reverse/tools/rainy75_rgb.py)
+(stdlib-only Python, Linux/macOS):
+
+```
+python3 reverse/tools/rainy75_rgb.py set F1 F2 F3 --color ff0000
+python3 reverse/tools/rainy75_rgb.py set WASD --color 00ff00   # groups: FROW WASD ARROWS NUMROW ALL
+python3 reverse/tools/rainy75_rgb.py fill --color 002040
+python3 reverse/tools/rainy75_rgb.py pulse --color ff5f00      # notification pulse, then clear
+python3 reverse/tools/rainy75_rgb.py clear
+```
 
 ## Open items / future
 
+- **Host control over Bluetooth** (in work): expose the SMP transport via BLE
+  (`CONFIG_MCUMGR_TRANSPORT_BT`) so `rgb_mgmt` works wirelessly; host side via
+  a BLE SMP client (e.g. Python `bleak` + smp).
 - **Battery accuracy**: validate the ADC (PD1 / 1-2 divider / Vref) against a
   multimeter; optionally read per-chip Vref calibration at flash `0xFE0C0`. The
   gauge degrades gracefully (coarse, on-demand) until then.

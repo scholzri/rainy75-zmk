@@ -32,6 +32,12 @@ if(CONFIG_FLASH_MGMT)
   zephyr_library_sources(src/flash_mgmt.c)
 endif()
 
+if(CONFIG_RGB_MGMT)
+  zephyr_library_named(rgb_mgmt)
+  zephyr_library_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
+  zephyr_library_sources(src/rgb_mgmt.c)
+endif()
+
 if(CONFIG_RAINY_RGB)
   zephyr_library_named(rainy_rgb)
   zephyr_library_include_directories(${APPLICATION_SOURCE_DIR}/include)

@@ -41,6 +41,16 @@ config RAINY_RGB
 	  Custom WS2812 lighting engine (effects, reactivity, per-key) that
 	  replaces ZMK's rgb_underglow. Owns the led_strip device directly.
 
+config RGB_MGMT
+	bool "Host-controlled per-key RGB via mcumgr"
+	default n
+	depends on MCUMGR && RAINY_RGB
+	help
+	  Adds a custom mcumgr group (ID 65) that lets a host script drive
+	  the rainy_rgb engine's direct-pixel mode: set individual keys by
+	  keymap position, fill, or clear back to the normal effect. Any
+	  physical Fn+RGB control exits host mode.
+
 config RAINY_RGB_ANSI_LEDMAP
 	bool "ANSI LED map (strip has no LED at the ISO <> slot)"
 	depends on RAINY_RGB
