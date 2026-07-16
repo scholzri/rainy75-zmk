@@ -70,7 +70,7 @@ read on their own.
   (the ZMK default; NKRO can be enabled in config). *The stock 2.4 GHz dongle uses a
   proprietary protocol and is **not** ported — see [Known limitations](#known-limitations).*
 - **`rainy_rgb` lighting engine** — a custom, out-of-tree engine driving all 83 per-key
-  WS2812 LEDs: 11 animated effects, reactive ripple/heatmap, FPS-independent speed, and
+  WS2812 LEDs: 11 animated effects, reactive ripple/heatmap, an opt-in walker diagnostic, FPS-independent speed, and
   *functional* indicators (CapsLock, Fn-layer highlight, battery gauge) — see
   [docs/rainy-rgb.md](docs/rainy-rgb.md).
 - **No debugger needed to install** — once you've built the images, a two-stage OTA →

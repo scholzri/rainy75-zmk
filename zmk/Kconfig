@@ -51,3 +51,15 @@ config RAINY_RGB_ANSI_LEDMAP
 	  than on the ISO strip (and the last ISO index does not exist).
 	  Selects the ANSI-calibrated pos_to_led/XY tables in led_map.c.
 	  Set automatically by ./build.sh --ansi.
+
+config RAINY_RGB_WALKER
+	bool "Walker diagnostic effect (LED-map calibration)"
+	depends on RAINY_RGB
+	default n
+	help
+	  Appends a "walker" effect (last in the Fn+Enter cycle) that lights
+	  exactly one LED and steps to the next chain index on each keypress,
+	  wrapping. It walks the raw WS2812 chain (0..N-1), independent of the
+	  ISO/ANSI pos_to_led map, so it works on either board and is how the
+	  ANSI map was ground-truthed. Off by default — enable only when
+	  calibrating or debugging the LED order.

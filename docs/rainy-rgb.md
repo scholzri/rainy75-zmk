@@ -13,7 +13,7 @@ Hardware-verified end to end on the physical keyboard (USB + BLE, mcuboot DFU).
 | File | Responsibility |
 |------|----------------|
 | `color.{h,c}` | Pure 8-bit color math: `hsv2rgb`, `sin8`, `scale8`, `hypot8`. Host-tested. |
-| `effects.{h,c}` | `struct rgb_frame`, the effect registry, and all 12 effect render functions. Pure. |
+| `effects.{h,c}` | `struct rgb_frame`, the effect registry, and all effect render functions (12 display effects, plus an opt-in `walker` diagnostic). Pure. |
 | `engine.{h,c}` | Owns `pixels[83]` + a dedicated **50 FPS render thread**; runtime state; the FPS-independent speed model; settings load; dispatch (effect → overlay → strip). |
 | `reactive.{h,c}` | Lock-free **SPSC press queue** (event thread → render thread) feeding an 8-slot ripple pool + per-LED `key_heat[83]`. |
 | `overlay.{h,c}` | Functional indicators (CapsLock / Fn-highlight / battery gauge). Pure, ZMK-free. |
@@ -48,6 +48,7 @@ render thread, never from an ISR/event callback. Frame rate is 50 FPS
 
 - **Ambient:** solid, rainbow, plasma, twinkle, comet, aurora, wave (diagonal), rain (drops fall by Y).
 - **Reactive:** reactive (global pulse on keypress), ripple (concurrent rainbow rings expanding from the pressed key), heatmap (keys glow on press, cool over time), speedcolour (board-wide colour deepens with typing speed — after the stock firmware's *Trigger Colour* mode; hue picks the colour, sat/val cap the deep end).
+- **Diagnostic (opt-in):** `walker` — enable `CONFIG_RAINY_RGB_WALKER` to append a 13th effect that lights exactly one LED (white) and steps to the next chain index on each keypress, wrapping. It walks the raw WS2812 chain `0..N-1`, independent of the ISO/ANSI `led_map`, so it works on either board — watch which key lights, press any key to advance. Off by default; enable only when calibrating the LED order.
 - `fire` and `calibrate` existed earlier and were removed on request.
 
 Spatial effects (ripple/wave/rain/heatmap) use the calibrated `led_positions[]` XY map.

@@ -186,6 +186,27 @@ void fx_speed_colour(struct rgb_frame *f) {
     for (uint16_t i = 0; i < f->n; i++) { f->px[i] = col; }
 }
 
+/* Diagnostic: lights exactly one LED (white, brightness-scaled) and steps to
+ * the next index on each keypress, wrapping at the end — nothing else is lit.
+ * Ground-truths the physical LED order behind led_map: watch which key lights,
+ * press any key to advance. Steps off last_press_tick edges, so it needs no
+ * per-key wiring of its own. Placed last in the cycle; not an ambient effect. */
+void fx_walker(struct rgb_frame *f) {
+    if (f->n == 0) { return; }
+    static uint16_t cur;
+    static uint32_t seen_press;
+    static uint8_t started;
+    if (!started) { started = 1; seen_press = f->last_press_tick; }
+    if (f->last_press_tick != seen_press) {
+        seen_press = f->last_press_tick;
+        cur = (uint16_t)((cur + 1u) % f->n);
+    }
+    struct rrgb on = { f->val, f->val, f->val };   /* white, brightness-scaled */
+    for (uint16_t i = 0; i < f->n; i++) {
+        f->px[i] = (i == cur) ? on : (struct rrgb){ 0, 0, 0 };
+    }
+}
+
 const struct rrgb_effect rrgb_effects[] = {
     { "solid",      fx_solid },
     { "rainbow",    fx_rainbow_wave },
@@ -199,5 +220,8 @@ const struct rrgb_effect rrgb_effects[] = {
     { "rain",       fx_rain },
     { "heatmap",    fx_heatmap },
     { "speedcolour", fx_speed_colour },
+#ifdef CONFIG_RAINY_RGB_WALKER
+    { "walker",     fx_walker },   /* diagnostic; opt-in via CONFIG_RAINY_RGB_WALKER */
+#endif
 };
 const uint16_t rrgb_effect_count = sizeof(rrgb_effects) / sizeof(rrgb_effects[0]);

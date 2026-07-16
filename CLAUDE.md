@@ -16,14 +16,14 @@ Fully reverse engineer the firmware and hardware of the Wobkey Rainy 75 Pro ISO 
 - **Firmware:** Evision Semiconductor proprietary platform (120KB with boot header, 115KB body), NOT QMK-based, developer "YKQ"
 - **Platform:** Shared across 7+ keyboards (CIDOO, IQUNIX, Ajazz, EPOMAKER) — all VID `0x320F` PID `0x5055`
 - **VIA:** V3 (protocol 11), 4 layers, 16 macros, 512B macro buffer
-- **RGB:** 83 WS2812 per-key LEDs (no separate underglow) via PSPI MOSI on PB7, DMA ch4, ~6 MHz SPI clock. ZMK firmware drives them with the custom out-of-tree **rainy_rgb** engine (replaces ZMK underglow; 12 effects + spatial/reactive + functional indicators) — see [docs/rainy-rgb.md](docs/rainy-rgb.md)
+- **RGB:** 83 WS2812 per-key LEDs (no separate underglow) via PSPI MOSI on PB7, DMA ch4, ~6 MHz SPI clock. ZMK firmware drives them with the custom out-of-tree **rainy_rgb** engine (replaces ZMK underglow; 12 effects + an opt-in walker diagnostic + spatial/reactive + functional indicators) — see [docs/rainy-rgb.md](docs/rainy-rgb.md)
 - **Ghidra:** 211 functions, 211 named (100%), project uses `RISCV:LE:32:AndeStar_v5`
 
 ## Documentation
 
 All technical findings are in `docs/`:
 - [docs/zmk-firmware.md](docs/zmk-firmware.md) — ZMK firmware build, BLE HCI driver, board definition, workspace layout
-- [docs/rainy-rgb.md](docs/rainy-rgb.md) — rainy_rgb out-of-tree lighting engine: 12 effects, XY calibration, functional indicators (CapsLock/Fn-highlight/battery), controls, build/flash
+- [docs/rainy-rgb.md](docs/rainy-rgb.md) — rainy_rgb out-of-tree lighting engine: 12 effects + opt-in walker diagnostic, XY calibration, functional indicators (CapsLock/Fn-highlight/battery), controls, build/flash
 - [docs/architecture.md](docs/architecture.md) — MCU, USB, HID interfaces, RGB, battery, connection modes
 - [docs/gpio-matrix.md](docs/gpio-matrix.md) — GPIO pins, matrix scan, timing, keymap, Fn combos
 - [docs/firmware-analysis.md](docs/firmware-analysis.md) — Ghidra, 211 functions, key pipeline, SRAM buffers, decompilation

@@ -117,7 +117,26 @@ int main(void) {
         CHECK(pxs[0].r == idle_r);
     }
 
-    /* registry: 12 effects (fire + calibrate removed, speedcolour added) */
+    /* walker diagnostic: exactly one LED lit; each keypress (last_press_tick
+       edge) steps to the next index, wrapping; same tick = no step */
+    {
+        struct rrgb pxw[83];
+        struct rgb_frame wf = { .px = pxw, .n = 83, .val = 200, .last_press_tick = 5 };
+        int c, a = -1, b = -1, d = -1;
+        fx_walker(&wf);
+        c = 0; for (int i = 0; i < 83; i++) if (pxw[i].r|pxw[i].g|pxw[i].b) { c++; a = i; }
+        CHECK(c == 1);                            /* exactly one LED lit */
+        wf.last_press_tick = 6; fx_walker(&wf);   /* a keypress */
+        c = 0; for (int i = 0; i < 83; i++) if (pxw[i].r|pxw[i].g|pxw[i].b) { c++; b = i; }
+        CHECK(c == 1);
+        CHECK(b == (a + 1) % 83);                 /* steps to the next LED */
+        fx_walker(&wf);                           /* same tick -> no step */
+        c = 0; for (int i = 0; i < 83; i++) if (pxw[i].r|pxw[i].g|pxw[i].b) { c++; d = i; }
+        CHECK(c == 1); CHECK(d == b);
+    }
+
+    /* registry: 12 effects by default; the walker diagnostic is opt-in
+       (CONFIG_RAINY_RGB_WALKER) and so is absent from this host build */
     CHECK(rrgb_effect_count == 12);
     CHECK(rrgb_effects[rrgb_effect_count-1].render == fx_speed_colour);
 
