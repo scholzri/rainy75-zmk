@@ -175,11 +175,34 @@ python3 reverse/tools/rainy75_rgb.py pulse --color ff5f00      # notification pu
 python3 reverse/tools/rainy75_rgb.py clear
 ```
 
+### Over Bluetooth
+
+`rgb_mgmt` is also reachable wirelessly — mcumgr group handlers are
+transport-agnostic, and the BLE SMP transport
+(`CONFIG_MCUMGR_TRANSPORT_BT`) is already enabled as the DFU backup path.
+No extra firmware config. Hardware-verified on the Rainy 75 Pro ISO DE
+(set / fill / pulse / clear / info over BLE GATT, incl. cross-transport
+state consistency with USB).
+
+Client: [`reverse/tools/rainy75_rgb_ble.py`](../reverse/tools/rainy75_rgb_ble.py)
+(needs `pip install bleak`; Linux/BlueZ tested, macOS should work via bleak's
+CoreBluetooth backend). Same CLI as the serial tool:
+
+```
+python3 reverse/tools/rainy75_rgb_ble.py info                  # finds "Rainy 75 Pro" in the BlueZ registry
+python3 reverse/tools/rainy75_rgb_ble.py pulse --color ff5f00
+python3 reverse/tools/rainy75_rgb_ble.py --address XX:XX:XX:XX:XX:XX set WASD --color 00ff00
+```
+
+Notes: the client resolves the keyboard from BlueZ's *known-devices*
+registry, not a scan — a connected peripheral doesn't advertise, so
+bleak's scan-based lookup can't see it. The link must be encrypted
+(Zephyr's SMP BT transport requires it); a keyboard bonded for BLE HID
+already satisfies that. Requests larger than one ATT MTU rely on
+`CONFIG_MCUMGR_TRANSPORT_BT_REASSEMBLY=y` (set in `conf/app.conf`).
+
 ## Open items / future
 
-- **Host control over Bluetooth** (in work): expose the SMP transport via BLE
-  (`CONFIG_MCUMGR_TRANSPORT_BT`) so `rgb_mgmt` works wirelessly; host side via
-  a BLE SMP client (e.g. Python `bleak` + smp).
 - **Battery accuracy**: validate the ADC (PD1 / 1-2 divider / Vref) against a
   multimeter; optionally read per-chip Vref calibration at flash `0xFE0C0`. The
   gauge degrades gracefully (coarse, on-demand) until then.
