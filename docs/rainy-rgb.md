@@ -129,6 +129,18 @@ loop on `rt.idle`. Host direct mode (`rgb_mgmt`) overrides the blank, so a host
 notification pulse still shows when the board is idle (that's when you're away).
 Off by default — `IS_ENABLED()` folds it out with zero behaviour change.
 
+## LED power rail auto-cut (PC2)
+
+Blanking the data alone is not enough on battery: a dark WS2812 still draws
+~0.5–1 mA quiescent, ~40–80 mA across the 83 LEDs. Whenever the strip has
+stayed dark for **2 s** (RGB toggled off with no overlay, or the activity-idle
+blank above), the render loop drops **PC2** — the MOSFET gate for LED VCC — and
+restores it (with a 5 ms settle for WS2812 power-on reset) before the next lit
+frame. The 2 s hold-off keeps overlay flicker (CapsLock toggling) from bouncing
+the rail. The black frame from `clear_strip()` always goes out while the rail
+is still up. Always on (`CONFIG_LED_STRIP_B91_SPI_PC2_POWER`); the other PC2
+sites are the led_strip driver init (rail on) and `poweroff.c` (deep sleep).
+
 ## Config (in `conf/app.conf`)
 
 - `CONFIG_ZMK_RGB_UNDERGLOW=n` (our engine owns the strip)

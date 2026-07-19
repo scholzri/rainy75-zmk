@@ -1,6 +1,7 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/led_strip.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/sys_io.h>
 #include <zephyr/init.h>
 #include "zmk_adapter.h"
 #include <zmk/event_manager.h>
@@ -78,4 +79,23 @@ void rrgb_strip_show(const struct rrgb *px, uint16_t n) {
         hw[i] = (struct led_rgb){ .r = px[i].r, .g = px[i].g, .b = px[i].b };
     }
     (void)led_strip_update_rgb(strip, hw, n);
+}
+
+/* PC2 gates LED VCC through a MOSFET (active-high). The led_strip driver
+ * configures the pin and powers the rail at init, poweroff.c drops it for
+ * deep sleep; here the render loop cuts it while the strip stays dark —
+ * a blanked WS2812 still draws ~0.5-1 mA quiescent, ~40-80 mA for 83 LEDs. */
+#define B91_GPIO_PC_OUT 0x80140313UL
+
+void rrgb_strip_power(bool on) {
+#if IS_ENABLED(CONFIG_LED_STRIP_B91_SPI_PC2_POWER)
+    if (on) {
+        sys_write8(sys_read8(B91_GPIO_PC_OUT) | BIT(2), B91_GPIO_PC_OUT);
+    } else {
+        sys_write8(sys_read8(B91_GPIO_PC_OUT) & ~BIT(2), B91_GPIO_PC_OUT);
+    }
+    LOG_INF("led rail %s", on ? "on" : "off");
+#else
+    ARG_UNUSED(on);
+#endif
 }

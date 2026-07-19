@@ -16,6 +16,14 @@ LOG_MODULE_REGISTER(rrgb_engine, CONFIG_LOG_DEFAULT_LEVEL);
 #define RRGB_STACK     1024
 #define RRGB_PRIO      10   /* preemptible, below BLE */
 
+/* LED VCC rail (PC2) management: cut the rail only after the strip has stayed
+ * dark this long — the hold-off keeps overlay flicker (caps toggling on/off)
+ * from bouncing the MOSFET — and give the rail a moment to settle before the
+ * first frame after re-power (WS2812 power-on reset). */
+#define RRGB_RAIL_OFF_HOLD_MS 2000
+#define RRGB_RAIL_OFF_TICKS   (RRGB_RAIL_OFF_HOLD_MS / RRGB_PERIOD_MS)
+#define RRGB_RAIL_SETTLE_MS   5
+
 /* --- Animation speed model (FPS-independent) ---
  * Ambient effects advance off a shared phase accumulator, NOT the raw frame
  * counter, so animation speed is decoupled from RRGB_FPS (raising the frame
@@ -108,6 +116,8 @@ static void clear_strip(void) {
 static void rrgb_loop(void *a, void *b, void *c) {
     ARG_UNUSED(a); ARG_UNUSED(b); ARG_UNUSED(c);
     bool was_lit = false;
+    bool rail_on = true;        /* driver init leaves PC2 HIGH */
+    uint32_t dark_ticks = 0;
     for (;;) {
         /* Deadline-based pacing: render_once sleeps through the ~2.66 ms DMA
          * transfer (End-IRQ), so sleep only the remainder of the frame period
@@ -122,11 +132,26 @@ static void rrgb_loop(void *a, void *b, void *c) {
          * option is off, IS_ENABLED() folds idle_off to false — identical behaviour. */
         bool idle_off = IS_ENABLED(CONFIG_RAINY_RGB_IDLE_BLANK) && rt.idle && !host_mode;
         if (!idle_off && (rt.on || host_mode || rrgb_overlay_active(rt.tick))) {
+            if (!rail_on) {
+                rrgb_strip_power(true);
+                rail_on = true;
+                k_msleep(RRGB_RAIL_SETTLE_MS);
+            }
             render_once();
             was_lit = true;
-        } else if (was_lit) {
-            clear_strip();      /* clear once when nothing needs to show */
-            was_lit = false;
+            dark_ticks = 0;
+        } else {
+            if (was_lit) {
+                clear_strip();  /* clear once when nothing needs to show —
+                                 * the black frame goes out while the rail is
+                                 * still up; the rail is cut only after the
+                                 * hold-off below */
+                was_lit = false;
+            }
+            if (rail_on && ++dark_ticks >= RRGB_RAIL_OFF_TICKS) {
+                rrgb_strip_power(false);
+                rail_on = false;
+            }
         }
 
         int64_t remain = deadline - k_uptime_get();
