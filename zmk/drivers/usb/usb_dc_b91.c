@@ -98,6 +98,8 @@ enum b91_usb_diag_code {
 	B91_DIAG_STARVED  = 7,  /* a = ep, b = un-armed ticks at trigger */
 	B91_DIAG_DETACH   = 8,
 	B91_DIAG_WQ_STUCK = 9,  /* b = poll ticks the USB workqueue sat idle */
+	B91_DIAG_WQ_STATE = 10, /* a = thread_state byte, b = pended_on low 16 */
+	B91_DIAG_WQ_PEND2 = 11, /* b = pended_on high 16 — resolve via zmk.elf map */
 };
 
 static __noinit struct {
@@ -431,12 +433,36 @@ static void wq_liveness_tick(void)
 	if (wq_stuck_ticks >= 20 && !wq_stuck_logged) {
 		wq_stuck_logged = true;
 		diag_ev(B91_DIAG_WQ_STUCK, 0, wq_stuck_ticks);
-		LOG_ERR("USB workqueue not running (%u ticks)", wq_stuck_ticks);
+
+		/* Forensics: is the thread dead or blocked, and on WHAT?
+		 * pended_on is the wait object's address — resolve it against
+		 * zmk.elf to name the semaphore/FIFO the thread hangs on.
+		 * The workqueue's own idle wait shows as its k_work_q queue;
+		 * anything else is the deadlock culprit. */
+		uintptr_t pend = (uintptr_t)z_usb_work_q.thread.base.pended_on;
+
+		diag_ev(B91_DIAG_WQ_STATE,
+			z_usb_work_q.thread.base.thread_state,
+			(uint16_t)(pend & 0xFFFF));
+		diag_ev(B91_DIAG_WQ_PEND2, 0, (uint16_t)(pend >> 16));
+		LOG_ERR("USB workqueue not running (%u ticks, state=0x%02x, "
+			"pended_on=%p)", wq_stuck_ticks,
+			z_usb_work_q.thread.base.thread_state, (void *)pend);
 	}
+}
+
+bool b91_usb_wq_stuck(void)
+{
+	return wq_stuck_logged;
 }
 #else
 static void wq_liveness_tick(void)
 {
+}
+
+bool b91_usb_wq_stuck(void)
+{
+	return false;
 }
 #endif
 

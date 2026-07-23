@@ -24,6 +24,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/usb/usb_device.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/sys_io.h>
 
 #include <b91_usb_diag.h>
 
@@ -106,11 +107,30 @@ static void ring_persist(void)
 
 #endif
 
+/* Minimum uptime before the reboot escalation is allowed: if the wedge
+ * re-formed this quickly after a boot, rebooting again would loop. */
+#define RECOVER_REBOOT_MIN_UPTIME_MS (10 * 60 * 1000)
+
 static void recover_work_cb(struct k_work *work)
 {
 	ARG_UNUSED(work);
 
 	ring_persist();
+
+	/* A dead USB workqueue thread cannot be recovered by re-attach: every
+	 * transfer completion runs on it, so each fresh enumeration rebuilds
+	 * the endpoints and then loses the first packet (hardware-confirmed
+	 * 2026-07-23: WQ_STUCK 10 s after resume, re-attach cycles useless).
+	 * Only a reboot rebuilds the thread.  Warm reset via the B91 PWDN
+	 * register (same mechanism as flash_mgmt's trampoline) — ~2 s through
+	 * MCUboot, .noinit diag ring survives. */
+	if (b91_usb_wq_stuck() &&
+	    k_uptime_get() >= RECOVER_REBOOT_MIN_UPTIME_MS) {
+		LOG_ERR("CDC starved + USB workqueue dead: rebooting");
+		k_msleep(100);
+		sys_write8(0x20, 0x801401ef);
+		return; /* not reached */
+	}
 
 	LOG_WRN("CDC starved: cycling USB re-attach");
 	usb_disable();

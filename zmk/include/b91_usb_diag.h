@@ -39,3 +39,9 @@ void b91_usb_cdc_starved(void);
  * length (0 = none).  Weak zero-length default in the driver so flash_mgmt
  * links in builds without the recovery module. */
 size_t b91_usb_diag_saved(const uint8_t **blob);
+
+/* True once the driver's liveness probe has declared the USB workqueue
+ * thread dead (marker work parked >= 10 s).  A starved CDC with a dead
+ * workqueue cannot be recovered by re-attach — only a reboot rebuilds the
+ * thread — so the recovery module escalates accordingly. */
+bool b91_usb_wq_stuck(void);

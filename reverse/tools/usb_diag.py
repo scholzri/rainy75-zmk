@@ -36,6 +36,8 @@ CODES = {
     7: "STARVED",
     8: "DETACH",
     9: "WQ_STUCK",
+    10: "WQ_STATE",
+    11: "WQ_PEND2",
 }
 
 # Zephyr usb_dc_status_code values (usb_dc.h)
@@ -66,6 +68,16 @@ def describe(code, a, b):
         return f"STARVED ep={a & 0x7F} ({how}) after {b} ticks ({b // 2}s) -> recovery hook"
     if name == "DETACH":
         return "DETACH"
+    if name == "WQ_STATE":
+        # thread_state bits (kernel_structs.h): 1=dummy 2=pending 4=prestart
+        # 8=dead 16=suspended 32=aborting 128=queued
+        bits = [n for m, n in [(1, "dummy"), (2, "PENDING"), (4, "prestart"),
+                               (8, "DEAD"), (16, "suspended"), (32, "aborting"),
+                               (128, "queued")] if a & m]
+        return (f"WQ_STATE thread_state=0x{a:02x} ({'|'.join(bits) or 'running?'}) "
+                f"pended_on_low16=0x{b:04x}")
+    if name == "WQ_PEND2":
+        return f"WQ_PEND2 pended_on_high16=0x{b:04x} (combine -> addr, resolve in zmk.elf)"
     return f"{name} a={a} b={b}"
 
 
