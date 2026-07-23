@@ -20,6 +20,7 @@ __pycache__/
 # IDE
 .idea/
 .vscode/
+.cache/   # clangd index (created by clangd/compile_commands.json tooling)
 
 # Playwright MCP
 .playwright-mcp/
