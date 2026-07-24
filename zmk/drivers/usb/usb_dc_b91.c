@@ -100,6 +100,10 @@ enum b91_usb_diag_code {
 	B91_DIAG_WQ_STUCK = 9,  /* b = poll ticks the USB workqueue sat idle */
 	B91_DIAG_WQ_STATE = 10, /* a = thread_state byte, b = pended_on low 16 */
 	B91_DIAG_WQ_PEND2 = 11, /* b = pended_on high 16 — resolve via zmk.elf map */
+	B91_DIAG_WQ_QSTAT = 12, /* a = marker k_work flags, b = bit0: queue list
+				 * non-empty — distinguishes orphaned-QUEUED items
+				 * (flags set + empty list) from a lost wakeup
+				 * (items in list, thread pending anyway) */
 };
 
 static __noinit struct {
@@ -445,9 +449,23 @@ static void wq_liveness_tick(void)
 			z_usb_work_q.thread.base.thread_state,
 			(uint16_t)(pend & 0xFFFF));
 		diag_ev(B91_DIAG_WQ_PEND2, 0, (uint16_t)(pend >> 16));
+
+		/* Submission-side invariants (2026-07-23 capture showed the
+		 * thread idle on its own queue while work never arrived):
+		 * marker flags stuck at QUEUED with an empty list = orphaned
+		 * items; non-empty list = lost wakeup; flags clear = submits
+		 * failing outright. */
+		bool q_nonempty =
+			!sys_slist_is_empty(&z_usb_work_q.pending);
+
+		diag_ev(B91_DIAG_WQ_QSTAT,
+			(uint8_t)k_work_busy_get(&wq_marker_work),
+			q_nonempty ? 1 : 0);
 		LOG_ERR("USB workqueue not running (%u ticks, state=0x%02x, "
-			"pended_on=%p)", wq_stuck_ticks,
-			z_usb_work_q.thread.base.thread_state, (void *)pend);
+			"pended_on=%p, marker_busy=0x%x, q_nonempty=%d)",
+			wq_stuck_ticks,
+			z_usb_work_q.thread.base.thread_state, (void *)pend,
+			k_work_busy_get(&wq_marker_work), q_nonempty);
 	}
 }
 

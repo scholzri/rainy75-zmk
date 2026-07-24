@@ -78,6 +78,15 @@ def describe(code, a, b):
                 f"pended_on_low16=0x{b:04x}")
     if name == "WQ_PEND2":
         return f"WQ_PEND2 pended_on_high16=0x{b:04x} (combine -> addr, resolve in zmk.elf)"
+    if name == "WQ_QSTAT":
+        # k_work_busy_get bits: 1=QUEUED 2=RUNNING 4=CANCELING (0x10=DELAYED)
+        flags = [n for m, n in [(1, "QUEUED"), (2, "RUNNING"), (4, "CANCELING"),
+                                (16, "DELAYED")] if a & m]
+        verdict = ("ORPHANED items (flagged queued, list empty)" if (a & 1) and not (b & 1)
+                   else "LOST WAKEUP (items in list, thread idle)" if b & 1
+                   else "submits failing (marker not queued)")
+        return (f"WQ_QSTAT marker={'|'.join(flags) or 'idle'} "
+                f"queue_{'non' if b & 1 else ''}empty -> {verdict}")
     return f"{name} a={a} b={b}"
 
 
