@@ -25,6 +25,7 @@ CLI:
 
 import argparse
 import base64
+import fcntl
 import glob
 import os
 import struct
@@ -216,6 +217,11 @@ class Rainy75:
 
     def _open(self):
         self.fd = os.open(self.port, os.O_RDWR | os.O_NOCTTY)
+        # Exclusive access: without TIOCEXCL, macOS allows concurrent opens of
+        # the same cu device, and two readers (e.g. a rainy75_think worker and
+        # a diag tool) silently steal each other's SMP responses.  With it,
+        # the second opener gets EBUSY — an honest, retryable failure.
+        fcntl.ioctl(self.fd, termios.TIOCEXCL)
         attrs = termios.tcgetattr(self.fd)
         attrs[0] = attrs[1] = attrs[3] = 0                       # raw
         attrs[2] = termios.CS8 | termios.CREAD | termios.CLOCAL  # 8N1

@@ -17,6 +17,8 @@
 #include <zephyr/irq.h>
 #include <zephyr/logging/log.h>
 
+#include <b91_usb_diag.h>
+
 
 LOG_MODULE_REGISTER(usb_dc_b91, CONFIG_USB_DRIVER_LOG_LEVEL);
 
@@ -70,6 +72,117 @@ static struct usb_dc_b91_state state;
 #define USB_SRAM_SIZE 256
 
 static uint8_t usb_sram_next;  /* next free byte in USB SRAM (bump allocator) */
+
+/* ========================================================================== *
+ *  USB Diagnostic Event Ring                                                  *
+ *                                                                             *
+ *  The CDC ACM console is this driver's own transport, so when the CDC path   *
+ *  dies there is no log channel left to explain why.  This ring records the   *
+ *  USB-level event sequence (status deliveries, SET_CONFIGURATIONs, EP        *
+ *  configure/enable, CDC OUT arm-state transitions) in .noinit SRAM: the MCU  *
+ *  runs from battery, so the ring survives cable pulls and re-attach cycles   *
+ *  and can be read back over SMP (flash_mgmt group 64, cmd 4) after the CDC   *
+ *  path recovers.  Lost only on actual power loss or cold boot.               *
+ * ========================================================================== */
+
+#define B91_USB_DIAG_MAGIC   0x55424447u /* "UBDG" */
+#define B91_USB_DIAG_ENTRIES 64
+
+enum b91_usb_diag_code {
+	B91_DIAG_STATUS   = 1,  /* a = usb_dc_status_code delivered to stack */
+	B91_DIAG_SETUP    = 2,  /* a = bRequest (5/9/11 only), b = wValue */
+	B91_DIAG_EP_CFG   = 3,  /* a = ep_addr, b = SRAM offset (0xFFFF = ENOMEM) */
+	B91_DIAG_EP_EN    = 4,  /* a = ep_addr */
+	B91_DIAG_EP_DIS   = 5,  /* a = ep_addr */
+	B91_DIAG_ARM      = 6,  /* a = armed?1:0, b = ticks spent in prior state */
+	B91_DIAG_STARVED  = 7,  /* a = ep, b = un-armed ticks at trigger */
+	B91_DIAG_DETACH   = 8,
+	B91_DIAG_WQ_STUCK = 9,  /* b = poll ticks the USB workqueue sat idle */
+	B91_DIAG_WQ_STATE = 10, /* a = thread_state byte, b = pended_on low 16 */
+	B91_DIAG_WQ_PEND2 = 11, /* b = pended_on high 16 — resolve via zmk.elf map */
+	B91_DIAG_WQ_QSTAT = 12, /* a = marker k_work flags, b = bit0: queue list
+				 * non-empty — distinguishes orphaned-QUEUED items
+				 * (flags set + empty list) from a lost wakeup
+				 * (items in list, thread pending anyway) */
+	B91_DIAG_SLOT     = 13, /* one per transfer slot at STARVED: a = slot ep,
+				 * b = (status byte << 8) | k_work busy flags —
+				 * names the stuck slot regardless of WQ state */
+	B91_DIAG_UNCONF   = 14, /* b = ticks attached-but-unconfigured — recovery
+				 * left the device outside the STARVED gate */
+};
+
+static __noinit struct {
+	uint32_t magic;
+	uint32_t seq;           /* total events ever written */
+	struct b91_usb_diag_evt evt[B91_USB_DIAG_ENTRIES];
+} usb_diag;
+
+static void diag_ev(uint8_t code, uint8_t a, uint16_t b)
+{
+	unsigned int key = irq_lock();
+
+	if (usb_diag.magic != B91_USB_DIAG_MAGIC) {
+		memset(&usb_diag, 0, sizeof(usb_diag));
+		usb_diag.magic = B91_USB_DIAG_MAGIC;
+	}
+
+	struct b91_usb_diag_evt *e =
+		&usb_diag.evt[usb_diag.seq % B91_USB_DIAG_ENTRIES];
+
+	e->ms = (uint32_t)k_uptime_get();
+	e->code = code;
+	e->a = a;
+	e->b = b;
+	usb_diag.seq++;
+
+	irq_unlock(key);
+}
+
+/* Snapshot for the SMP reader: copies up to max_evts entries ending at the
+ * newest, oldest first.  Returns the number of entries copied. */
+size_t b91_usb_diag_snapshot(struct b91_usb_diag_evt *out, size_t skip,
+			     size_t max_evts, uint32_t *seq)
+{
+	unsigned int key = irq_lock();
+
+	if (usb_diag.magic != B91_USB_DIAG_MAGIC) {
+		irq_unlock(key);
+		*seq = 0;
+		return 0;
+	}
+
+	uint32_t avail = MIN(usb_diag.seq, (uint32_t)B91_USB_DIAG_ENTRIES);
+	uint32_t first = usb_diag.seq - avail;
+	size_t n = 0;
+
+	for (uint32_t i = first + skip; i < usb_diag.seq && n < max_evts; i++) {
+		out[n++] = usb_diag.evt[i % B91_USB_DIAG_ENTRIES];
+	}
+	*seq = usb_diag.seq;
+
+	irq_unlock(key);
+	return n;
+}
+
+/* Hook invoked when the CDC bulk OUT endpoint has been starved (enabled but
+ * un-armed while the host holds us configured) past the threshold.  The app
+ * layer overrides this to cycle a USB re-attach; the weak default keeps
+ * MCUboot/bridge builds linking without the recovery module. */
+__weak void b91_usb_cdc_starved(void)
+{
+}
+
+__weak size_t b91_usb_diag_saved(const uint8_t **blob)
+{
+	*blob = NULL;
+	return 0;
+}
+
+__weak void b91_usb_stress_start(uint32_t cycles, uint32_t gap_ms)
+{
+	ARG_UNUSED(cycles);
+	ARG_UNUSED(gap_ms);
+}
 
 /* ========================================================================== *
  *  Register Access Helpers                                                    *
@@ -276,12 +389,118 @@ static void irq_connect_all(void)
 
 #define B91_USB_SUSPEND_POLL_MS 500
 
+/* CDC bulk OUT starvation detection.  In a healthy configured device the
+ * bulk OUT EP is re-armed (BUSY) within milliseconds of every packet; the
+ * only long-lived un-armed states are a wedged RX chain (transfer-layer
+ * teardown race — observed twice on hardware after macOS dark-wake
+ * enumeration churn) or a host that filled the CDC ring with nobody
+ * reading the port (rx_paused).  A 2-minute threshold plus the recovery
+ * module's own holdoff makes the false-positive cost one benign re-attach. */
+#define B91_USB_STARVE_TICKS (240) /* x 500 ms = 2 min */
+
 static void suspend_poll_cb(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(suspend_poll_work, suspend_poll_cb);
 
 /* Poll-local trackers (poll runs only on the system workqueue). */
 static uint32_t poll_last_isr_events;
 static uint8_t poll_last_bits;
+static uint8_t diag_bulk_out_ep;   /* CDC bulk OUT EP number (5 or 6), 0 = none */
+static uint16_t out_unarmed_ticks;
+static bool out_starve_fired;
+static uint16_t unconf_ticks;      /* attached-but-unconfigured catch-all */
+static int64_t last_int_in_write_ms; /* last HID interrupt-IN write (typing) */
+
+int64_t b91_usb_last_hid_activity(void)
+{
+	return last_int_in_write_ms;
+}
+
+/* USB workqueue liveness probe.  All usb_transfer completions run on the
+ * dedicated z_usb_work_q thread; if that thread dies (stack overflow, fault)
+ * CDC wedges bidirectionally with no other symptom.  Each poll tick submits
+ * a marker work item to it and checks the previous one ran. */
+#ifdef CONFIG_USB_WORKQUEUE
+extern struct k_work_q z_usb_work_q;
+
+static volatile bool wq_marker_ran;
+static uint16_t wq_stuck_ticks;
+static bool wq_stuck_logged;
+
+static void wq_marker_cb(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	wq_marker_ran = true;
+}
+
+static K_WORK_DEFINE(wq_marker_work, wq_marker_cb);
+
+static void wq_liveness_tick(void)
+{
+	if (wq_marker_ran) {
+		wq_marker_ran = false;
+		wq_stuck_ticks = 0;
+		wq_stuck_logged = false;
+		k_work_submit_to_queue(&z_usb_work_q, &wq_marker_work);
+		return;
+	}
+
+	if (wq_stuck_ticks == 0) {
+		/* First tick: marker may simply not have been submitted yet */
+		k_work_submit_to_queue(&z_usb_work_q, &wq_marker_work);
+	}
+	if (wq_stuck_ticks < UINT16_MAX) {
+		wq_stuck_ticks++;
+	}
+	/* 10 s of a parked 500 ms marker = the workqueue thread is gone */
+	if (wq_stuck_ticks >= 20 && !wq_stuck_logged) {
+		wq_stuck_logged = true;
+		diag_ev(B91_DIAG_WQ_STUCK, 0, wq_stuck_ticks);
+
+		/* Forensics: is the thread dead or blocked, and on WHAT?
+		 * pended_on is the wait object's address — resolve it against
+		 * zmk.elf to name the semaphore/FIFO the thread hangs on.
+		 * The workqueue's own idle wait shows as its k_work_q queue;
+		 * anything else is the deadlock culprit. */
+		uintptr_t pend = (uintptr_t)z_usb_work_q.thread.base.pended_on;
+
+		diag_ev(B91_DIAG_WQ_STATE,
+			z_usb_work_q.thread.base.thread_state,
+			(uint16_t)(pend & 0xFFFF));
+		diag_ev(B91_DIAG_WQ_PEND2, 0, (uint16_t)(pend >> 16));
+
+		/* Submission-side invariants (2026-07-23 capture showed the
+		 * thread idle on its own queue while work never arrived):
+		 * marker flags stuck at QUEUED with an empty list = orphaned
+		 * items; non-empty list = lost wakeup; flags clear = submits
+		 * failing outright. */
+		bool q_nonempty =
+			!sys_slist_is_empty(&z_usb_work_q.pending);
+
+		diag_ev(B91_DIAG_WQ_QSTAT,
+			(uint8_t)k_work_busy_get(&wq_marker_work),
+			q_nonempty ? 1 : 0);
+		LOG_ERR("USB workqueue not running (%u ticks, state=0x%02x, "
+			"pended_on=%p, marker_busy=0x%x, q_nonempty=%d)",
+			wq_stuck_ticks,
+			z_usb_work_q.thread.base.thread_state, (void *)pend,
+			k_work_busy_get(&wq_marker_work), q_nonempty);
+	}
+}
+
+bool b91_usb_wq_stuck(void)
+{
+	return wq_stuck_logged;
+}
+#else
+static void wq_liveness_tick(void)
+{
+}
+
+bool b91_usb_wq_stuck(void)
+{
+	return false;
+}
+#endif
 
 static void suspend_poll_cb(struct k_work *work)
 {
@@ -327,9 +546,110 @@ static void suspend_poll_cb(struct k_work *work)
 	if ((bits & B91_USB_IRQ_SUSPEND_O) && quiet && !state.suspended) {
 		state.suspended = true;
 		LOG_DBG("USB bus idle; reporting SUSPEND");
+		diag_ev(B91_DIAG_STATUS, USB_DC_SUSPEND, 0);
 		if (state.status_cb) {
 			state.status_cb(USB_DC_SUSPEND, NULL);
 		}
+	}
+
+	wq_liveness_tick();
+
+	/* --- CDC bulk OUT starvation watchdog ---
+	 *
+	 * Two dead phenotypes, both while the hardware says the host still
+	 * holds us configured:
+	 *   - enabled but never re-armed (transfer chain died), or
+	 *   - removed from EDP_EN entirely (stack tore the EP down and no
+	 *     re-enumeration followed) — the 2026-07-23 overnight wedge
+	 *     escaped the enabled-only check.
+	 * Gated on !suspended: while the host sleeps the bus is idle by
+	 * design, and a re-attach cycle would dark-wake macOS. */
+	if (diag_bulk_out_ep != 0 && !state.suspended &&
+	    (usb_read8(B91_USB_HOST_CONN) & B91_USB_HOST_CONN_CONFIGURED)) {
+		bool enabled = usb_read8(B91_USB_EDP_EN) &
+			       b91_ep_bit(diag_bulk_out_ep);
+		bool armed = enabled &&
+			     (usb_read8(B91_USB_EP_CTRL(diag_bulk_out_ep)) &
+			      B91_USB_EP_BUSY);
+
+		if (armed) {
+			if (out_unarmed_ticks > 1) {
+				diag_ev(B91_DIAG_ARM, 1, out_unarmed_ticks);
+			}
+			out_unarmed_ticks = 0;
+			out_starve_fired = false;
+		} else {
+			if (out_unarmed_ticks == 0) {
+				diag_ev(B91_DIAG_ARM, enabled ? 0 : 2, 0);
+			}
+			if (out_unarmed_ticks < UINT16_MAX) {
+				out_unarmed_ticks++;
+			}
+			if (out_unarmed_ticks >= B91_USB_STARVE_TICKS &&
+			    !out_starve_fired) {
+				out_starve_fired = true;
+				diag_ev(B91_DIAG_STARVED,
+					diag_bulk_out_ep | (enabled ? 0 : 0x80),
+					out_unarmed_ticks);
+				LOG_WRN("CDC bulk OUT EP%u dead %u ticks (%s)",
+					diag_bulk_out_ep, out_unarmed_ticks,
+					enabled ? "un-armed" : "disabled");
+#ifdef CONFIG_USB_DEVICE_STACK
+				/* Name the stuck transfer slot: which ep, what
+				 * terminal status, what work-item flags — the
+				 * 2026-07-23 stress wedges showed a slot whose
+				 * completion never ran on a LIVE workqueue,
+				 * invisible to the WQ_STUCK-gated forensics. */
+				{
+					uint8_t se[4];
+					int8_t ss[4];
+					uint8_t sf[4];
+					size_t sn = usb_transfer_slots_snapshot(
+						se, ss, sf, 4);
+
+					for (size_t s = 0; s < sn; s++) {
+						diag_ev(B91_DIAG_SLOT, se[s],
+							((uint16_t)(uint8_t)ss[s]
+							 << 8) | sf[s]);
+					}
+				}
+#endif
+				b91_usb_cdc_starved();
+			}
+		}
+		unconf_ticks = 0;
+	} else if (state.attached && !state.suspended && !quiet &&
+		   !(usb_read8(B91_USB_HOST_CONN) &
+		     B91_USB_HOST_CONN_CONFIGURED)) {
+		/* Catch-all rung: an ACTIVE host (bus traffic this tick) is
+		 * talking to us but leaving us unconfigured — a failed
+		 * recovery cycle can park the device here, outside the
+		 * starvation gate above, with even HID dead (observed
+		 * 2026-07-23: stress wedge + failed re-attach needed a
+		 * physical replug).
+		 *
+		 * The !quiet gate is load-bearing: attached-but-unconfigured
+		 * with a SILENT bus is the normal indefinite state of a
+		 * keyboard on a dock whose upstream host is away — recovery
+		 * cycling (let alone reboot) there turned into a reboot loop
+		 * that poisoned the host's next enumeration (2026-07-24 dock
+		 * regression).  A silent bus belongs to the fork's reattach
+		 * watchdog and its exponential backoff, not to us. */
+		out_unarmed_ticks = 0;
+		out_starve_fired = false;
+		if (unconf_ticks < UINT16_MAX) {
+			unconf_ticks++;
+		}
+		if (unconf_ticks == B91_USB_STARVE_TICKS) {
+			diag_ev(B91_DIAG_UNCONF, 0, unconf_ticks);
+			LOG_WRN("attached but unconfigured %u ticks",
+				unconf_ticks);
+			b91_usb_cdc_starved();
+		}
+	} else {
+		out_unarmed_ticks = 0;
+		out_starve_fired = false;
+		unconf_ticks = 0;
 	}
 
 	k_work_reschedule(&suspend_poll_work, K_MSEC(B91_USB_SUSPEND_POLL_MS));
@@ -422,11 +742,15 @@ int usb_dc_attach(void)
 	state.suspended = false;
 	poll_last_isr_events = state.isr_events;
 	poll_last_bits = 0;
+	diag_bulk_out_ep = 0;
+	out_unarmed_ticks = 0;
+	out_starve_fired = false;
 	k_work_reschedule(&suspend_poll_work, K_MSEC(B91_USB_SUSPEND_POLL_MS));
 	LOG_INF("B91 USB attached");
 
 	/* Notify stack that physical connection is established.
 	 * Host will see DP pullup and send bus reset next. */
+	diag_ev(B91_DIAG_STATUS, USB_DC_CONNECTED, 0);
 	if (state.status_cb) {
 		state.status_cb(USB_DC_CONNECTED, NULL);
 	}
@@ -447,6 +771,7 @@ int usb_dc_detach(void)
 
 	state.attached = false;
 	state.suspended = false;
+	diag_ev(B91_DIAG_DETACH, 0, 0);
 	LOG_INF("B91 USB detached");
 	return 0;
 }
@@ -520,6 +845,7 @@ static void usb_dc_b91_isr(const void *arg)
 	if (state.suspended) {
 		state.suspended = false;
 		LOG_DBG("USB bus active again; reporting RESUME");
+		diag_ev(B91_DIAG_STATUS, USB_DC_RESUME, 0);
 		if (state.status_cb) {
 			state.status_cb(USB_DC_RESUME, NULL);
 		}
@@ -566,6 +892,7 @@ static void usb_dc_b91_isr(const void *arg)
 		memset(state.ep_in_toggle, 0, sizeof(state.ep_in_toggle));
 		memset(state.ep_in_pending, 0, sizeof(state.ep_in_pending));
 
+		diag_ev(B91_DIAG_STATUS, USB_DC_RESET, 0);
 		if (state.status_cb) {
 			state.status_cb(USB_DC_RESET, NULL);
 		}
@@ -602,6 +929,18 @@ static void usb_dc_b91_isr(const void *arg)
 			state.ep[0].buf[0], state.ep[0].buf[1],
 			(uint16_t)((state.ep[0].buf[3] << 8) | state.ep[0].buf[2]),
 			(uint16_t)((state.ep[0].buf[7] << 8) | state.ep[0].buf[6]));
+
+		/* Trace enumeration-shaping STANDARD requests only (SET_ADDRESS,
+		 * SET_CONFIGURATION, SET_INTERFACE) — GET_DESCRIPTOR bursts would
+		 * flood the 64-entry ring, and class requests share bRequest
+		 * values (HID SET_REPORT is also 9). */
+		if ((state.ep[0].buf[0] & 0x60) == 0 &&
+		    (state.ep[0].buf[1] == 5 || state.ep[0].buf[1] == 9 ||
+		     state.ep[0].buf[1] == 11)) {
+			diag_ev(B91_DIAG_SETUP, state.ep[0].buf[1],
+				(uint16_t)((state.ep[0].buf[3] << 8) |
+					   state.ep[0].buf[2]));
+		}
 
 		if (state.ep_cb[0][0]) {
 			state.ep_cb[0][0](0x00, USB_DC_EP_SETUP);
@@ -843,6 +1182,10 @@ int usb_dc_ep_configure(const struct usb_dc_ep_cfg_data *const cfg)
 		bool is_out = !(cfg->ep_addr & 0x80); /* bit 7 = IN */
 		uint8_t buf_size = is_out ? 64 : ROUND_UP(cfg->ep_mps, 8);
 
+		if (is_out && cfg->ep_type == USB_DC_EP_BULK) {
+			diag_bulk_out_ep = n;
+		}
+
 		/*
 		 * Allocation must be idempotent: the stack re-runs
 		 * usb_dc_ep_configure() for every EP on EVERY SET_CONFIGURATION,
@@ -858,6 +1201,8 @@ int usb_dc_ep_configure(const struct usb_dc_ep_cfg_data *const cfg)
 		 */
 		if (state.ep[n].sram_size >= buf_size) {
 			usb_write8(B91_USB_EP_BUF_ADDR(n), state.ep[n].sram_addr);
+			diag_ev(B91_DIAG_EP_CFG, cfg->ep_addr,
+				state.ep[n].sram_addr);
 			LOG_DBG("EP 0x%02x: USB SRAM [%u..%u) reused",
 				cfg->ep_addr, state.ep[n].sram_addr,
 				(uint16_t)state.ep[n].sram_addr + buf_size);
@@ -869,6 +1214,7 @@ int usb_dc_ep_configure(const struct usb_dc_ep_cfg_data *const cfg)
 					"have %u of %u free",
 					cfg->ep_addr, buf_size,
 					USB_SRAM_SIZE - usb_sram_next, USB_SRAM_SIZE);
+				diag_ev(B91_DIAG_EP_CFG, cfg->ep_addr, 0xFFFF);
 				return -ENOMEM;
 			}
 
@@ -877,6 +1223,7 @@ int usb_dc_ep_configure(const struct usb_dc_ep_cfg_data *const cfg)
 				cfg->ep_addr, usb_sram_next,
 				(uint16_t)usb_sram_next + buf_size, buf_size,
 				is_out ? "OUT" : "IN");
+			diag_ev(B91_DIAG_EP_CFG, cfg->ep_addr, usb_sram_next);
 			state.ep[n].sram_addr = usb_sram_next;
 			state.ep[n].sram_size = buf_size;
 			usb_sram_next = alloc_end;
@@ -927,6 +1274,7 @@ int usb_dc_ep_enable(const uint8_t ep)
 		usb_write8(B91_USB_EP_CTRL(n), B91_USB_EP_BUSY);
 	}
 
+	diag_ev(B91_DIAG_EP_EN, ep, 0);
 	LOG_INF("EP 0x%02x enabled (edp_en=0x%02x irq_mask=0x%02x)",
 		ep, usb_read8(B91_USB_EDP_EN), usb_read8(B91_USB_EP_IRQ_MASK));
 	return 0;
@@ -956,6 +1304,7 @@ int usb_dc_ep_disable(const uint8_t ep)
 	irq_mask &= ~b91_ep_bit(n);
 	usb_write8(B91_USB_EP_IRQ_MASK, irq_mask);
 
+	diag_ev(B91_DIAG_EP_DIS, ep, 0);
 	LOG_DBG("EP 0x%02x disabled", ep);
 	return 0;
 }
@@ -1093,6 +1442,13 @@ int usb_dc_ep_write(const uint8_t ep, const uint8_t *const data,
 	 * "Set Configuration will set BIT(7) to 1." */
 	if (!(usb_read8(B91_USB_HOST_CONN) & B91_USB_HOST_CONN_CONFIGURED)) {
 		return -ENODEV;
+	}
+
+	/* Track interrupt-IN traffic (HID reports = the user typing) so the
+	 * recovery module can defer disruptive re-attach/reboot cycles to a
+	 * typing pause instead of eating keystrokes mid-sentence. */
+	if (state.ep[n].type == USB_DC_EP_INTERRUPT) {
+		last_int_in_write_ms = k_uptime_get();
 	}
 
 	/* Data EP IN: wait for endpoint to become free.

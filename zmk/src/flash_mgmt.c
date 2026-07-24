@@ -4,11 +4,13 @@
  * Exposes erase/write/read/commit commands for arbitrary flash offsets,
  * enabling firmware restore over USB without the SWS hardware debugger.
  *
- * Group ID 64 (MGMT_GROUP_ID_PERUSER), 4 commands:
- *   0: erase   {"off": uint, "len": uint}        -> {"rc": int}
- *   1: write   {"off": uint, "data": bstr}        -> {"rc": int}
- *   2: read    {"off": uint, "len": uint}          -> {"rc": int, "data": bstr}
- *   3: commit  {"stg": uint, "len": uint}          -> {"rc": int} (then erase+copy+reset)
+ * Group ID 64 (MGMT_GROUP_ID_PERUSER), 5 commands:
+ *   0: erase    {"off": uint, "len": uint}        -> {"rc": int}
+ *   1: write    {"off": uint, "data": bstr}        -> {"rc": int}
+ *   2: read     {"off": uint, "len": uint}          -> {"rc": int, "data": bstr}
+ *   3: commit   {"stg": uint, "len": uint}          -> {"rc": int} (then erase+copy+reset)
+ *   4: usb_diag {"off": uint}                       -> {"rc": int, "seq": uint,
+ *                "n": uint, "data": bstr}  (B91 USB event ring, see b91_usb_diag.h)
  *
  * Safety: refuses operations touching >= 0xFE000 (calibration/MAC region).
  *
@@ -32,12 +34,20 @@
 #include <mgmt/mcumgr/util/zcbor_bulk.h>
 #include <zephyr/logging/log.h>
 
+#include <b91_usb_diag.h>
+
 LOG_MODULE_REGISTER(flash_mgmt, LOG_LEVEL_INF);
 
-#define FLASH_MGMT_ID_ERASE  0
-#define FLASH_MGMT_ID_WRITE  1
-#define FLASH_MGMT_ID_READ   2
-#define FLASH_MGMT_ID_COMMIT 3
+#define FLASH_MGMT_ID_ERASE      0
+#define FLASH_MGMT_ID_WRITE      1
+#define FLASH_MGMT_ID_READ       2
+#define FLASH_MGMT_ID_COMMIT     3
+#define FLASH_MGMT_ID_USB_DIAG   4
+#define FLASH_MGMT_ID_USB_STRESS 5
+
+/* Entries per usb_diag response page; 32 x 8 B = 256 B of CBOR bstr keeps the
+ * response inside one SMP netbuf (CONFIG_MCUMGR_TRANSPORT_NETBUF_SIZE=512). */
+#define USB_DIAG_PAGE_EVTS 32
 
 /* Protected region: RF/ADC calibration (0xFE000) and BLE MAC (0xFF000) */
 #define FLASH_PROTECTED_START  0xFE000
@@ -386,11 +396,106 @@ static int flash_mgmt_commit(struct smp_streamer *ctxt)
 	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
 }
 
+#ifdef CONFIG_USB_DC_B91
+/*
+ * USB diag: page through the driver's .noinit event ring, or ("saved": 1)
+ * the copy persisted to settings at the last starvation event.
+ *   read {"off": uint, "saved": uint}
+ *     ->  {"rc": 0, "seq": uint, "n": uint, "data": bstr}
+ * data = n consecutive 8-byte b91_usb_diag_evt records starting at ring
+ * index off (oldest = 0); page until n < USB_DIAG_PAGE_EVTS.
+ */
+static int flash_mgmt_usb_diag(struct smp_streamer *ctxt)
+{
+	zcbor_state_t *zse = ctxt->writer->zs;
+	zcbor_state_t *zsd = ctxt->reader->zs;
+	uint32_t off = 0;
+	uint32_t saved = 0;
+	uint32_t seq = 0;
+	size_t decoded;
+	struct b91_usb_diag_evt evts[USB_DIAG_PAGE_EVTS];
+	size_t n;
+
+	struct zcbor_map_decode_key_val decode_map[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("off", zcbor_uint32_decode, &off),
+		ZCBOR_MAP_DECODE_KEY_DECODER("saved", zcbor_uint32_decode, &saved),
+	};
+
+	if (zcbor_map_decode_bulk(zsd, decode_map, ARRAY_SIZE(decode_map),
+				  &decoded) != 0) {
+		return MGMT_ERR_EINVAL;
+	}
+
+	if (saved) {
+		const uint8_t *blob;
+		size_t blen = b91_usb_diag_saved(&blob);
+		uint32_t count = 0;
+
+		n = 0;
+		if (blen >= 8) {
+			memcpy(&seq, blob, 4);
+			memcpy(&count, blob + 4, 4);
+			count = MIN(count, (blen - 8) / sizeof(evts[0]));
+			for (uint32_t i = off;
+			     i < count && n < USB_DIAG_PAGE_EVTS; i++) {
+				memcpy(&evts[n++],
+				       blob + 8 + i * sizeof(evts[0]),
+				       sizeof(evts[0]));
+			}
+		}
+	} else {
+		n = b91_usb_diag_snapshot(evts, off, USB_DIAG_PAGE_EVTS, &seq);
+	}
+
+	bool ok = zcbor_tstr_put_lit(zse, "rc") &&
+		  zcbor_int32_put(zse, 0) &&
+		  zcbor_tstr_put_lit(zse, "seq") &&
+		  zcbor_uint32_put(zse, seq) &&
+		  zcbor_tstr_put_lit(zse, "n") &&
+		  zcbor_uint32_put(zse, (uint32_t)n) &&
+		  zcbor_tstr_put_lit(zse, "data") &&
+		  zcbor_bstr_encode_ptr(zse, (const uint8_t *)evts,
+					n * sizeof(evts[0]));
+	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+/*
+ * USB stress: trigger the re-enumeration burst that births the CDC wedge.
+ *   write {"n": uint, "gap": uint(ms)}  ->  {"rc": 0}
+ * Response is sent before the first cycle (500 ms delay device-side).
+ */
+static int flash_mgmt_usb_stress(struct smp_streamer *ctxt)
+{
+	zcbor_state_t *zse = ctxt->writer->zs;
+	zcbor_state_t *zsd = ctxt->reader->zs;
+	uint32_t n = 0, gap = 3000;
+	size_t decoded;
+
+	struct zcbor_map_decode_key_val decode_map[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("n", zcbor_uint32_decode, &n),
+		ZCBOR_MAP_DECODE_KEY_DECODER("gap", zcbor_uint32_decode, &gap),
+	};
+
+	if (zcbor_map_decode_bulk(zsd, decode_map, ARRAY_SIZE(decode_map),
+				  &decoded) != 0 || n == 0) {
+		return MGMT_ERR_EINVAL;
+	}
+
+	b91_usb_stress_start(n, gap);
+
+	bool ok = zcbor_tstr_put_lit(zse, "rc") && zcbor_int32_put(zse, 0);
+	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+#endif /* CONFIG_USB_DC_B91 */
+
 static const struct mgmt_handler flash_mgmt_handlers[] = {
 	[FLASH_MGMT_ID_ERASE]  = { .mh_read = NULL, .mh_write = flash_mgmt_erase },
 	[FLASH_MGMT_ID_WRITE]  = { .mh_read = NULL, .mh_write = flash_mgmt_write },
 	[FLASH_MGMT_ID_READ]   = { .mh_read = flash_mgmt_read, .mh_write = NULL },
 	[FLASH_MGMT_ID_COMMIT] = { .mh_read = NULL, .mh_write = flash_mgmt_commit },
+#ifdef CONFIG_USB_DC_B91
+	[FLASH_MGMT_ID_USB_DIAG] = { .mh_read = flash_mgmt_usb_diag, .mh_write = NULL },
+	[FLASH_MGMT_ID_USB_STRESS] = { .mh_read = NULL, .mh_write = flash_mgmt_usb_stress },
+#endif
 };
 
 static struct mgmt_group flash_mgmt_group = {

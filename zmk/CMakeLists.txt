@@ -32,6 +32,11 @@ if(CONFIG_FLASH_MGMT)
   zephyr_library_sources(src/flash_mgmt.c)
 endif()
 
+if(CONFIG_USB_DC_B91 AND CONFIG_ZMK_USB)
+  zephyr_library_named(usb_cdc_recover)
+  zephyr_library_sources(src/usb_cdc_recover.c)
+endif()
+
 if(CONFIG_RGB_MGMT)
   zephyr_library_named(rgb_mgmt)
   zephyr_library_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)

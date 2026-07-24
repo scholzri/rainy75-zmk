@@ -1,0 +1,76 @@
+From f1b5b9f8538d090b2df94a901cb1ee0e3e1f6e21 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 23 Jul 2026 09:33:00 -0700
+Subject: [PATCH] usb: device: fix transfer slot leak on cancel/resubmit races
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A completed transfer kept its terminal status (-ECANCELED etc.), so
+usb_ep_get_transfer() continued to match the dead slot for that
+endpoint, and usb_transfer() would happily bank a second transfer on
+an endpoint whose canceled transfer had not yet drained its deferred
+completion.  The shadowed transfer then never received completion
+events and leaked its slot permanently; enough reset/reconfigure churn
+(e.g. macOS dark-wake re-enumerations of a composite CDC-ACM+HID
+device) exhausted the pool and every subsequent usb_transfer() failed
+with -ENOMEM until reboot — observed on hardware as a CDC-ACM console
+dead in both directions while HID (direct endpoint writes) kept
+working, surviving physical re-enumeration and cured only by power
+cycle.
+
+Free slots fully (status = 0) before making them claimable, and reject
+a new transfer while ANY undrained transfer exists for the endpoint.
+
+Signed-off-by: Micheal Waltz <micheal@ecliptik.com>
+---
+ subsys/usb/device/usb_transfer.c | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/subsys/usb/device/usb_transfer.c b/subsys/usb/device/usb_transfer.c
+index 95cf3198a..f066783a0 100644
+--- a/subsys/usb/device/usb_transfer.c
++++ b/subsys/usb/device/usb_transfer.c
+@@ -151,6 +151,15 @@ done:
+ 			trans->ep, trans->status, trans->tsize);
+ 
+ 		trans->cb = NULL;
++
++		/* Mark the slot fully free BEFORE it becomes claimable via the
++		 * semaphore.  A completed transfer used to keep its terminal
++		 * status (e.g. -ECANCELED), so usb_ep_get_transfer() kept
++		 * matching the dead slot for that endpoint: transfer-complete
++		 * events were routed to the corpse instead of a newly banked
++		 * transfer on another slot, starving the live transfer forever.
++		 */
++		trans->status = 0;
+ 		k_sem_give(&trans->sem);
+ 
+ 		/* Transfer completion callback */
+@@ -213,6 +222,23 @@ int usb_transfer(uint8_t ep, uint8_t *data, size_t dlen, unsigned int flags,
+ 
+ 	key = irq_lock();
+ 
++	/* Enforce one transfer per endpoint across ALL slots.  The pre-check
++	 * above only rejects -EBUSY; a canceled transfer whose deferred
++	 * completion has not yet drained (-ECANCELED, semaphore still held)
++	 * must also block new submissions — otherwise a second transfer gets
++	 * banked on the same endpoint, and whichever sits at the higher slot
++	 * index is shadowed by usb_ep_get_transfer() and leaks its slot
++	 * permanently.  Enough reset/reconfigure churn (e.g. macOS dark-wake
++	 * re-enumerations) then exhausts the pool and every subsequent
++	 * usb_transfer() fails with -ENOMEM until reboot.  The rejected
++	 * caller loses nothing: the pending completion's callback re-submits
++	 * once the cancel drains.
++	 */
++	if (usb_ep_get_transfer(ep)) {
++		ret = -EBUSY;
++		goto done;
++	}
++
+ 	for (size_t i = 0; i < ARRAY_SIZE(ut_data); i++) {
+ 		if (!k_sem_take(&ut_data[i].sem, K_NO_WAIT)) {
+ 			trans = &ut_data[i];
+-- 
+2.53.0
+
