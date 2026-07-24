@@ -38,7 +38,12 @@ CODES = {
     9: "WQ_STUCK",
     10: "WQ_STATE",
     11: "WQ_PEND2",
+    13: "SLOT",
+    14: "UNCONF",
 }
+
+STATUS_NAMES = {0: "free", 0x100 - 16: "-EBUSY(live)", 0x100 - 125: "-ECANCELED",
+                0x100 - 22: "-EINVAL"}
 
 # Zephyr usb_dc_status_code values (usb_dc.h)
 STATUS = {0: "ERROR", 1: "RESET", 2: "CONNECTED", 3: "CONFIGURED",
@@ -78,6 +83,15 @@ def describe(code, a, b):
                 f"pended_on_low16=0x{b:04x}")
     if name == "WQ_PEND2":
         return f"WQ_PEND2 pended_on_high16=0x{b:04x} (combine -> addr, resolve in zmk.elf)"
+    if name == "SLOT":
+        st = (b >> 8) & 0xFF
+        wf = b & 0xFF
+        stname = STATUS_NAMES.get(st, f"status=0x{st:02x}")
+        wfbits = [n for m, n in [(1, "QUEUED"), (2, "RUNNING"),
+                                 (4, "CANCELING"), (16, "DELAYED")] if wf & m]
+        return (f"SLOT ep=0x{a:02x} {stname} work={'|'.join(wfbits) or 'idle'}")
+    if name == "UNCONF":
+        return f"UNCONF attached-but-unconfigured {b} ticks -> recovery"
     if name == "WQ_QSTAT":
         # k_work_busy_get bits: 1=QUEUED 2=RUNNING 4=CANCELING (0x10=DELAYED)
         flags = [n for m, n in [(1, "QUEUED"), (2, "RUNNING"), (4, "CANCELING"),

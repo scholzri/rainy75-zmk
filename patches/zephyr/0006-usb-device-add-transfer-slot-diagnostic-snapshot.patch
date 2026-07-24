@@ -1,0 +1,44 @@
+From a6df87e612a6688ef0d4c5889aa7df90e1b4457e Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 23 Jul 2026 20:10:41 -0700
+Subject: [PATCH] usb: device: add transfer slot diagnostic snapshot
+
+Expose each transfer slot's endpoint, status and work-item busy flags
+for out-of-band diagnostics. Captures the orphaned-completion state
+(slot in a terminal status whose deferred completion work never ran on
+a live workqueue) observed while chasing a CDC ACM RX wedge under
+enumeration churn on Telink B91.
+
+Signed-off-by: Micheal Waltz <micheal@ecliptik.com>
+---
+ subsys/usb/device/usb_transfer.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/subsys/usb/device/usb_transfer.c b/subsys/usb/device/usb_transfer.c
+index f066783a0..77d60a3d4 100644
+--- a/subsys/usb/device/usb_transfer.c
++++ b/subsys/usb/device/usb_transfer.c
+@@ -288,6 +288,20 @@ done:
+ 	return ret;
+ }
+ 
++size_t usb_transfer_slots_snapshot(uint8_t *eps, int8_t *statuses,
++				   uint8_t *wflags, size_t max)
++{
++	size_t n = MIN(max, ARRAY_SIZE(ut_data));
++
++	for (size_t i = 0; i < n; i++) {
++		eps[i] = ut_data[i].ep;
++		statuses[i] = (int8_t)ut_data[i].status;
++		wflags[i] = (uint8_t)k_work_busy_get(&ut_data[i].work);
++	}
++
++	return n;
++}
++
+ void usb_cancel_transfer(uint8_t ep)
+ {
+ 	struct usb_transfer_data *trans;
+-- 
+2.53.0
+

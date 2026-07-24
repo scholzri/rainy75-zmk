@@ -51,3 +51,8 @@ bool b91_usb_wq_stuck(void);
  * enumeration burst that births the CDC wedge.  Weak no-op in the driver
  * so builds without the recovery module link. */
 void b91_usb_stress_start(uint32_t cycles, uint32_t gap_ms);
+
+/* From the fork's zephyr patch 0006 (usb_transfer.c): copy up to max
+ * transfer slots' {ep, status, k_work busy flags}.  Returns slots copied. */
+size_t usb_transfer_slots_snapshot(uint8_t *eps, int8_t *statuses,
+				   uint8_t *wflags, size_t max);

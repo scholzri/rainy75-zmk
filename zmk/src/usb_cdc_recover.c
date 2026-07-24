@@ -44,6 +44,7 @@ void usb_status_cb(enum usb_dc_status_code status, const uint8_t *params);
 #define RECOVER_HOLDOFF_MS (10 * 60 * 1000)
 
 static int64_t last_recover_at = -RECOVER_HOLDOFF_MS;
+static uint32_t recover_count;
 
 /* Saved-ring blob: u32 seq, u32 count, then count b91_usb_diag_evt records.
  * One buffer for the copy loaded from settings at boot (last wedge, possibly
@@ -117,14 +118,20 @@ static void recover_work_cb(struct k_work *work)
 
 	ring_persist();
 
-	/* A dead USB workqueue thread cannot be recovered by re-attach: every
-	 * transfer completion runs on it, so each fresh enumeration rebuilds
-	 * the endpoints and then loses the first packet (hardware-confirmed
-	 * 2026-07-23: WQ_STUCK 10 s after resume, re-attach cycles useless).
-	 * Only a reboot rebuilds the thread.  Warm reset via the B91 PWDN
-	 * register (same mechanism as flash_mgmt's trampoline) — ~2 s through
-	 * MCUboot, .noinit diag ring survives. */
-	if (b91_usb_wq_stuck() &&
+	/* Escalate to reboot when re-attach provably can't help:
+	 *  - the USB workqueue thread is dead (every transfer completion
+	 *    runs on it; hardware-confirmed 2026-07-23), or
+	 *  - the previous recovery didn't stick (starved again within
+	 *    15 min — a stuck transfer slot survives re-enumeration, and a
+	 *    failed re-attach can even park the device unconfigured with
+	 *    HID dead; observed needing a physical replug).
+	 * Warm reset via the B91 PWDN register (same mechanism as
+	 * flash_mgmt's trampoline) — ~2 s through MCUboot. */
+	bool repeat_failure = (k_uptime_get() - last_recover_at) <
+			      (15 * 60 * 1000) && recover_count > 0;
+
+	recover_count++;
+	if ((b91_usb_wq_stuck() || repeat_failure) &&
 	    k_uptime_get() >= RECOVER_REBOOT_MIN_UPTIME_MS) {
 		LOG_ERR("CDC starved + USB workqueue dead: rebooting");
 		k_msleep(100);
@@ -146,7 +153,10 @@ void b91_usb_cdc_starved(void)
 {
 	int64_t now = k_uptime_get();
 
-	if (now - last_recover_at < RECOVER_HOLDOFF_MS) {
+	/* Shorter holdoff (3 min) than before: the repeat-failure path in
+	 * recover_work_cb needs a second chance to fire and escalate to
+	 * reboot; 10 min of holdoff just prolonged a dead keyboard. */
+	if (now - last_recover_at < (3 * 60 * 1000)) {
 		LOG_WRN("CDC starved again within holdoff; skipping");
 		return;
 	}

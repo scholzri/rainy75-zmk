@@ -104,6 +104,11 @@ enum b91_usb_diag_code {
 				 * non-empty — distinguishes orphaned-QUEUED items
 				 * (flags set + empty list) from a lost wakeup
 				 * (items in list, thread pending anyway) */
+	B91_DIAG_SLOT     = 13, /* one per transfer slot at STARVED: a = slot ep,
+				 * b = (status byte << 8) | k_work busy flags —
+				 * names the stuck slot regardless of WQ state */
+	B91_DIAG_UNCONF   = 14, /* b = ticks attached-but-unconfigured — recovery
+				 * left the device outside the STARVED gate */
 };
 
 static __noinit struct {
@@ -402,6 +407,7 @@ static uint8_t poll_last_bits;
 static uint8_t diag_bulk_out_ep;   /* CDC bulk OUT EP number (5 or 6), 0 = none */
 static uint16_t out_unarmed_ticks;
 static bool out_starve_fired;
+static uint16_t unconf_ticks;      /* attached-but-unconfigured catch-all */
 
 /* USB workqueue liveness probe.  All usb_transfer completions run on the
  * dedicated z_usb_work_q thread; if that thread dies (stack overflow, fault)
@@ -582,12 +588,55 @@ static void suspend_poll_cb(struct k_work *work)
 				LOG_WRN("CDC bulk OUT EP%u dead %u ticks (%s)",
 					diag_bulk_out_ep, out_unarmed_ticks,
 					enabled ? "un-armed" : "disabled");
+#ifdef CONFIG_USB_DEVICE_STACK
+				/* Name the stuck transfer slot: which ep, what
+				 * terminal status, what work-item flags — the
+				 * 2026-07-23 stress wedges showed a slot whose
+				 * completion never ran on a LIVE workqueue,
+				 * invisible to the WQ_STUCK-gated forensics. */
+				{
+					uint8_t se[4];
+					int8_t ss[4];
+					uint8_t sf[4];
+					size_t sn = usb_transfer_slots_snapshot(
+						se, ss, sf, 4);
+
+					for (size_t s = 0; s < sn; s++) {
+						diag_ev(B91_DIAG_SLOT, se[s],
+							((uint16_t)(uint8_t)ss[s]
+							 << 8) | sf[s]);
+					}
+				}
+#endif
 				b91_usb_cdc_starved();
 			}
+		}
+		unconf_ticks = 0;
+	} else if (state.attached && !state.suspended &&
+		   !(usb_read8(B91_USB_HOST_CONN) &
+		     B91_USB_HOST_CONN_CONFIGURED)) {
+		/* Catch-all rung: attached with the pull-up presented but the
+		 * host never (re)configured us — a failed recovery cycle can
+		 * park the device here, outside the starvation gate above,
+		 * with even HID dead (observed 2026-07-23: stress wedge +
+		 * failed re-attach needed a physical replug).  The fork's
+		 * reattach watchdog normally handles a dead bus; this fires
+		 * only if that also fails for 2 minutes straight. */
+		out_unarmed_ticks = 0;
+		out_starve_fired = false;
+		if (unconf_ticks < UINT16_MAX) {
+			unconf_ticks++;
+		}
+		if (unconf_ticks == B91_USB_STARVE_TICKS) {
+			diag_ev(B91_DIAG_UNCONF, 0, unconf_ticks);
+			LOG_WRN("attached but unconfigured %u ticks",
+				unconf_ticks);
+			b91_usb_cdc_starved();
 		}
 	} else {
 		out_unarmed_ticks = 0;
 		out_starve_fired = false;
+		unconf_ticks = 0;
 	}
 
 	k_work_reschedule(&suspend_poll_work, K_MSEC(B91_USB_SUSPEND_POLL_MS));
