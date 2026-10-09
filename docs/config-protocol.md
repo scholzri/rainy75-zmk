@@ -20,18 +20,35 @@ Firmware: `zmk/src/config/` (registry `cfg_registry.c`, table `cfg_table.c`, sto
 | 4 | write `reset` | `{}` (all writable) or `{k: [key, ...]}` | `{rc}` |
 
 - Encoding: every request carries a CBOR map, `{}` when there are no fields (`list`, `get`,
-  `set` and `reset` refuse an empty payload with `EINVAL`). Replies use indefinite-length
-  arrays and maps, so a client's CBOR decoder must accept them.
+  `set` and `reset` refuse an empty payload with `EINVAL`). Replies may use definite- or
+  indefinite-length arrays and maps (today's build uses indefinite); a client's CBOR decoder
+  must accept both.
+- Access: over USB the group is reachable without authentication, the same as firmware
+  upload over USB. Over Bluetooth it needs an authenticated bond
+  (`CONFIG_MCUMGR_TRANSPORT_BT_PERM_RW_AUTHEN`, Zephyr's default with `BT_SMP`).
 - `info`: `v` protocol version (1), `n` number of settings, `fx` the effect names in
   table order (as built), `rev` a change counter that changes on every change from any
-  source (host, Fn keys). Hosts poll `info` and re-read values when `rev` changes.
+  source (host, Fn keys). Hosts poll `info` and re-read values when `rev` changes. `rev`
+  is not persistent: it restarts at 0 on every boot (loading `rgb.boot_effect` can already
+  count as one change), so clients compare it for inequality only and re-read everything
+  after any (re)connect.
 - `list` / `get` page: a reply holds as many entries as fit one mcumgr buffer (512 bytes),
   at least one; `next` is the index to ask for next, absent on the last page. `i` past the
-  end gives an empty page (`s: []` or `v: {}`) and no `next`.
+  end gives an empty page (`s: []` or `v: {}`) and no `next`. The page size is an internal
+  estimate (a page may hold fewer entries than would fit), so clients follow `next` and
+  never assume a page size.
 - `get` with `k` pages too: `i` is an index into the requested key list and `next` is the
   index into that list to continue from. A client continues either mode by re-sending the
-  same request with `i = next`. A key listed twice is answered once.
-- `set` applies immediately; storage is written 2 s after the last change.
+  same request with `i = next`. A key listed twice is answered once. An unknown key anywhere
+  in `k` fails the whole request with `ENOENT` (no partial reply); more than 32 keys in `k`
+  give `EINVAL`.
+- `k: []` (present but empty) reads or resets nothing; an absent `k` means all (for `reset`:
+  all writable settings).
+- `set` applies immediately; storage is written 2 s after the last change. A `set` or
+  `reset` of any setting that lives in the rainy_rgb state record (`rgb.on`, `rgb.effect`,
+  `rgb.hue`, `rgb.sat`, `rgb.val`, `rgb.speed`) leaves host pixel mode (group 65 direct
+  mode), so the new value is visible; `rgb.boot_effect` only takes effect at the next boot
+  and does not.
 - `reset` with keys checks all of them first (unknown: `ENOENT`, read-only:
   `EACCESSDENIED`) and resets none if one fails.
 
@@ -45,15 +62,27 @@ Firmware: `zmk/src/config/` (registry `cfg_registry.c`, table `cfg_table.c`, sto
 | `c` | CBOR unsigned `0xRRGGBB` | null | null |
 | `l` | CBOR list of texts, a subset of `a` in order | list of names | null |
 
-`flags`: bit 0 = read-only. Names are identifiers, not display text; clients own labels.
+`l`: the order is the client's order (kept as sent); duplicates are dropped, the first one
+kept, and `set` echoes the result.
+
+`flags`: bit 0 = read-only; the other bits are reserved, clients ignore them. Names are
+identifiers, not display text; clients own labels.
 
 ## Errors
 
+A failed request's reply is a map with only `rc` (non-zero); clients check `rc` before
+reading any other field.
+
 mcumgr `rc`: 3 `EINVAL` (wrong type, out of range, unknown name, list too long, bad
-request), 5 `ENOENT` (unknown key), 7 `EMSGSIZE` (reply too large), 11 `EACCESSDENIED`
-(read-only; `set` returns it before the value is checked). A valid value that needs
-normalization is normalized and echoed (duplicates in a list are dropped, the first one
-kept).
+request), 5 `ENOENT` (unknown key), 7 `EMSGSIZE` (reply too large), 8 `ENOTSUP` (no such
+group, command or op, see below), 11 `EACCESSDENIED` (read-only; `set` returns it before the
+value is checked). A valid value that needs normalization is normalized and echoed (for
+example a list without its duplicates).
+
+`ENOTSUP` is how a client detects old firmware: a build without group 67 (the fallback
+image, v0.3.x) answers every request of this group with rc 8. The same rc comes from a
+command number this build does not have or from the wrong op (for example `set` sent as a
+read).
 
 ## Settings
 
