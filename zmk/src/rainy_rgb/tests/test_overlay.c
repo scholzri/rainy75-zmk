@@ -9,6 +9,24 @@ static struct rrgb blue(uint8_t v)  { return (struct rrgb){0, 0, v}; }
 static struct rrgb white(uint8_t v) { return (struct rrgb){v, v, v}; }
 static struct rrgb at(const struct rrgb *px, int pos) { return px[rrgb_led_for_position((uint32_t)pos)]; }
 
+/* The board's layer 1 (rainy75.keymap): bound (not &trans) at 0..14, 28,
+ * 43, 56, 65, 72 and 80..82, as zmk_adapter.c reads it from the keymap. */
+static const char *real_fn_dev(uint16_t pos, void *ctx) {
+    static const uint8_t lit[] = {0, 1, 2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
+                                  12, 13, 14, 28, 43, 56, 65, 72, 80, 81, 82};
+    (void)ctx;
+    for (unsigned i = 0; i < sizeof(lit); i++) {
+        if (lit[i] == pos) { return "rgb"; }
+    }
+    return "transparent";
+}
+
+static void set_real_fn_keys(void) {
+    uint32_t m[RRGB_FN_MASK_WORDS];
+    rrgb_fn_mask_build(real_fn_dev, NULL, 83, "transparent", m);
+    rrgb_overlay_set_fn_keys(m);
+}
+
 #define POS_F(i)  (1 + (i))   /* F1..F3 = positions 1..3 */
 #define POS_F4    4
 #define POS_F5    5
@@ -203,8 +221,139 @@ static void test_effect_gain_frame(void) {
     CHECK(rrgb_effect_gain_frame(128, false, true) == rrgb_effect_gain_next(128, false));
 }
 
+/* rrgb_fn_mask_build(): lit unless unbound (NULL) or transparent; &none is
+ * a binding (lit); positions past the mask are ignored. */
+static const char *table_dev(uint16_t pos, void *ctx) {
+    const char *const *t = ctx;
+    return pos < 4 ? t[pos] : (pos == 95 ? "kp" : "transparent");
+}
+
+static void test_fn_mask_build(void) {
+    const char *t[4] = {"kp", "transparent", NULL, "none"};
+    uint32_t m[RRGB_FN_MASK_WORDS];
+
+    rrgb_fn_mask_build(table_dev, t, 100, "transparent", m);
+    CHECK(m[0] == ((1u << 0) | (1u << 3)));
+    CHECK(m[1] == 0);
+    CHECK(m[2] == (1u << 31));                   /* position 95; 96..99 ignored */
+    rrgb_fn_mask_build(table_dev, t, 100, NULL, m);   /* no &trans in the build */
+    CHECK((m[0] & (1u << 1)) != 0);
+    CHECK((m[0] & (1u << 2)) == 0);              /* unbound stays dark */
+    rrgb_fn_mask_build(table_dev, t, 2, "transparent", m);
+    CHECK(m[0] == 1u && m[1] == 0 && m[2] == 0); /* only n positions read */
+}
+
+/* ind.fn_highlight off: holding Fn changes nothing (no BLE in this build). */
+static void test_fn_highlight_setting(void) {
+    struct rrgb px[83];
+
+    rrgb_overlay_init(false);
+    rrgb_overlay_set_caps(false);
+    rrgb_overlay_battery_show(0);                /* window closed by tick 1000 */
+    set_real_fn_keys();
+    rrgb_overlay_set_fn(true);
+    rrgb_overlay_set_fn_highlight(false);
+    CHECK(!rrgb_overlay_active(1000));
+    for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){50, 50, 50}; }
+    rrgb_overlay_render(px, 83, 1000);
+    for (int i = 0; i < 83; i++) { CHECK(eq(px[i], (struct rrgb){50, 50, 50})); }
+    rrgb_overlay_set_fn_highlight(true);
+    CHECK(rrgb_overlay_active(1000));
+    rrgb_overlay_render(px, 83, 1000);
+    CHECK(eq(at(px, 0), white(255)) && eq(at(px, 31), white(0)));
+    rrgb_overlay_set_fn(false);
+}
+
+/* The highlight follows the key set it is given (the live keymap). */
+static void test_fn_keys_live(void) {
+    struct rrgb px[83];
+    uint32_t m[RRGB_FN_MASK_WORDS] = {0};
+
+    rrgb_overlay_init(false);
+    m[31 / 32] = 1u << (31 % 32);                /* only Q bound on layer 1 */
+    rrgb_overlay_set_fn_keys(m);
+    rrgb_overlay_set_fn(true);
+    for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){50, 50, 50}; }
+    rrgb_overlay_render(px, 83, 1000);
+    CHECK(eq(at(px, 31), white(255)));
+    CHECK(eq(at(px, 0), white(0)));              /* Esc dark now */
+    rrgb_overlay_set_fn(false);
+    set_real_fn_keys();
+}
+
+/* ind.caps_style / ind.caps_color. */
+static void test_caps_styles(void) {
+    struct rrgb px[83];
+
+    rrgb_overlay_init(false);
+    rrgb_overlay_set_fn(false);
+    rrgb_overlay_battery_show(0);
+    rrgb_overlay_set_caps(true);
+    rrgb_overlay_set_caps_style(RRGB_CAPS_KEY, 0xFF0000);
+    for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){100, 100, 100}; }
+    rrgb_overlay_render(px, 83, 1000);
+    CHECK(eq(at(px, 44), (struct rrgb){255, 0, 0}));
+    CHECK(eq(at(px, 31), (struct rrgb){100, 100, 100}));
+    rrgb_overlay_set_caps_style(RRGB_CAPS_TINT, 0x0000FF);
+    for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){100, 100, 100}; }
+    rrgb_overlay_render(px, 83, 1000);
+    for (int i = 0; i < 83; i++) { CHECK(eq(px[i], (struct rrgb){50, 50, 177})); }
+    CHECK(rrgb_overlay_active(1000));
+    rrgb_overlay_set_caps_style(RRGB_CAPS_OFF, 0x0000FF);
+    CHECK(!rrgb_overlay_active(1000));
+    for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){100, 100, 100}; }
+    rrgb_overlay_render(px, 83, 1000);
+    for (int i = 0; i < 83; i++) { CHECK(eq(px[i], (struct rrgb){100, 100, 100})); }
+    rrgb_overlay_set_caps_style(RRGB_CAPS_KEY, 0xFFFFFF);   /* the defaults again */
+    rrgb_overlay_set_caps(false);
+}
+
+/* ind.bat_low: the pulse decision. */
+static void test_bat_low_alpha(void) {
+    CHECK(RRGB_BAT_LOW_PERIOD == 100);                   /* 2 s at 50 FPS */
+    CHECK(rrgb_bat_low_alpha(10, 0, false, 0) == 0);     /* off */
+    CHECK(rrgb_bat_low_alpha(10, 20, true, 0) == 0);     /* USB host connected */
+    CHECK(rrgb_bat_low_alpha(0, 20, false, 0) == 0);     /* no reading yet */
+    CHECK(rrgb_bat_low_alpha(20, 20, false, 0) == 0);    /* at the threshold: not below */
+    CHECK(rrgb_bat_low_alpha(19, 20, false, 0) == 255);  /* full at phase 0 ... */
+    CHECK(rrgb_bat_low_alpha(19, 20, false, RRGB_BAT_LOW_PERIOD / 2) == 0);   /* dark at half */
+    CHECK(rrgb_bat_low_alpha(19, 20, false, RRGB_BAT_LOW_PERIOD / 4) == 127);
+    CHECK(rrgb_bat_low_alpha(19, 20, false, RRGB_BAT_LOW_PERIOD) == 255);     /* 2 s period */
+}
+
+/* The pulse on Esc: blends toward red, touches nothing else, keeps nothing
+ * active by itself. */
+static void test_bat_low_render(void) {
+    struct rrgb px[83];
+    int esc = rrgb_led_for_position(0);
+
+    rrgb_overlay_init(false);
+    rrgb_overlay_set_battery(10);
+    rrgb_overlay_set_bat_low(20);
+    for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){100, 100, 100}; }
+    rrgb_overlay_bat_low_render(px, 83, 0, false);
+    CHECK(eq(at(px, 0), (struct rrgb){255, 0, 0}));
+    CHECK(eq(at(px, 31), (struct rrgb){100, 100, 100}));
+    px[esc] = (struct rrgb){100, 100, 100};
+    rrgb_overlay_bat_low_render(px, 83, RRGB_BAT_LOW_PERIOD / 2, false);
+    CHECK(eq(at(px, 0), (struct rrgb){100, 100, 100}));  /* trough: the effect shows */
+    rrgb_overlay_bat_low_render(px, 83, RRGB_BAT_LOW_PERIOD / 4, false);
+    CHECK(at(px, 0).r > 100 && at(px, 0).g < 100);        /* half way to red */
+    px[esc] = (struct rrgb){100, 100, 100};
+    rrgb_overlay_bat_low_render(px, 83, 0, true);
+    CHECK(eq(at(px, 0), (struct rrgb){100, 100, 100}));  /* USB host: no pulse */
+    rrgb_overlay_battery_show(0);
+    CHECK(!rrgb_overlay_active(1000));                   /* not an active overlay */
+    rrgb_overlay_set_bat_low(0);
+    rrgb_overlay_bat_low_render(px, 83, 0, false);
+    CHECK(eq(at(px, 0), (struct rrgb){100, 100, 100}));  /* off */
+    rrgb_overlay_set_battery(0);
+}
+
 int main(void) {
     struct rrgb px[83];
+
+    set_real_fn_keys();   /* the Fn layer as the adapter reads it */
 
     /* reset state */
     rrgb_overlay_set_caps(false);
@@ -268,5 +417,11 @@ int main(void) {
     test_ble();
     test_effect_gain();
     test_effect_gain_frame();
+    test_fn_mask_build();
+    test_fn_highlight_setting();
+    test_fn_keys_live();
+    test_caps_styles();
+    test_bat_low_alpha();
+    test_bat_low_render();
     DONE();
 }
