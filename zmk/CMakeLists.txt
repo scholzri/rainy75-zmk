@@ -59,6 +59,7 @@ if(CONFIG_RAINY75_CONFIG)
     src/config/cfg_registry.c
     src/config/cfg_table.c
     src/config/cfg_store.c
+    src/config/cfg_mgmt.c
   )
 endif()
 
