@@ -12,13 +12,15 @@ Usage:
     rainy75_cfg.py reset [KEY ...]      # back to the defaults (all, or the named ones)
     rainy75_cfg.py --ble get            # over Bluetooth (needs bleak; see rainy75_rgb_ble.py)
 
-Values: on/off for switches, numbers, names for choices, colours as RRGGBB
-(FF8000, or quoted '#FF8000': an unquoted # starts a shell comment), lists as
-comma-separated names (set rgb.cycle solid,plasma,wave).
+Values: on/off for switches, numbers, names for choices, colours as exactly
+six hex digits RRGGBB (FF8000, 0xFF8000, or quoted '#FF8000': an unquoted #
+starts a shell comment), lists as comma-separated names (set rgb.cycle
+solid,plasma,wave; set rgb.cycle '' for an empty list, which means all).
 """
 
 import argparse
 import asyncio
+import re
 import sys
 
 import rainy75_rgb
@@ -55,9 +57,14 @@ def cbor(v):
     if isinstance(v, str):
         return smp.cbor_encode_tstr(v)
     if isinstance(v, (list, tuple)):
-        if len(v) > 23:
+        n = len(v)
+        if n < 24:
+            head = bytes([0x80 | n])
+        elif n < 256:
+            head = bytes([0x98, n])
+        else:
             raise ValueError("list too long")
-        return bytes([0x80 | len(v)]) + b"".join(cbor(x) for x in v)
+        return head + b"".join(cbor(x) for x in v)
     raise TypeError(f"no CBOR for {type(v).__name__}")
 
 
@@ -81,10 +88,10 @@ def parse_value(entry, text):
             raise ValueError(f"{key}: {n} is outside {a}..{b}")
         return n
     if typ == "c":
-        n = int(text[1:] if text.startswith("#") else text, 16)
-        if not 0 <= n <= 0xFFFFFF:
-            raise ValueError(f"{key}: {text!r} is not a colour #RRGGBB")
-        return n
+        m = re.fullmatch(r"(?:#|0[xX])?([0-9A-Fa-f]{6})", text)
+        if not m:
+            raise ValueError(f"{key}: {text!r} is not a colour RRGGBB (six hex digits)")
+        return int(m.group(1), 16)
     if typ == "e":
         if text not in a:
             raise ValueError(f"{key}: {text!r} is not one of {', '.join(a)}")
@@ -164,6 +171,14 @@ class SerialLink:
         self.dfu.close()
 
 
+def _bleak_text(e):
+    """One line for a bleak error: BleakGATTProtocolError carries (code, text)
+    in args, which str() would print as a tuple."""
+    if len(e.args) > 1 and isinstance(e.args[-1], str):
+        return e.args[-1]
+    return str(e) or "Bluetooth error"
+
+
 class BleLink:
     def __init__(self, address=None):
         import rainy75_rgb_ble
@@ -171,14 +186,27 @@ class BleLink:
         self._bleak_error = BleakError
         self.loop = asyncio.new_event_loop()
         self.kb = rainy75_rgb_ble.Rainy75BLE(address=address)
-        self._run(self.kb.connect())
+        self._connect()
+
+    def _connect(self):
+        """Connect; if that fails after the link came up, take it down again
+        and close the loop, so a failed first contact leaves nothing open."""
+        try:
+            self._run(self.kb.connect())
+        except BaseException:
+            try:
+                self._run(self.kb.disconnect())
+            except Exception:
+                pass
+            self.loop.close()
+            raise
 
     def _run(self, coro):
         """Run on the link's loop; bleak's own errors become a one-line RuntimeError."""
         try:
             return self.loop.run_until_complete(coro)
         except self._bleak_error as e:
-            raise RuntimeError(str(e) or "Bluetooth error") from None
+            raise RuntimeError(_bleak_text(e)) from None
 
     def request(self, op, cmd, fields):
         pairs = [(k, cbor(v)) for k, v in fields]
@@ -189,7 +217,7 @@ class BleLink:
             if str(e).startswith("device rc=") and rc.isdigit():
                 raise DeviceError(int(rc)) from None
             raise
-        except TimeoutError as e:  # asyncio.wait_for: empty message
+        except (TimeoutError, asyncio.TimeoutError) as e:  # asyncio.wait_for: empty message
             if str(e):
                 raise
             raise TimeoutError("no response from the keyboard over Bluetooth") from None
