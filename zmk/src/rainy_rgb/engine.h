@@ -28,8 +28,9 @@ void rrgb_set_persist(const struct rrgb_persist *in);
 void rrgb_request_save(void); /* implemented in state.c */
 
 /* --- Single parameters (runtime settings, config/cfg_table.c) ---
- * The persisted state as single values. A set clamps like a load, leaves
- * host mode (the new value should be visible) and saves like a Fn key. */
+ * The persisted state as single values. A set clamps like a load (except the
+ * effect: out of range is ignored, a load resets it to 0), leaves host mode
+ * (the new value should be visible) and saves like a Fn key. */
 enum rrgb_param {
     RRGB_P_ON,
     RRGB_P_EFFECT,
@@ -40,8 +41,10 @@ enum rrgb_param {
 };
 uint32_t rrgb_param_get(uint8_t p);
 void rrgb_param_set(uint8_t p, uint32_t v);
-/* Effect after boot (setting rgb.boot_effect); not saved, the persisted
- * effect stays what the user last chose. */
+/* Effect after boot (setting rgb.boot_effect). It is not saved by itself, but
+ * the next save of the state record (any later Fn change or settings set)
+ * stores the effect then showing: "last" means the effect showing at the last
+ * save. */
 void rrgb_apply_boot_effect(uint8_t effect);
 /* Called after every state change (Fn keys, rrgb_param_set). The default
  * does nothing; config/cfg_table.c overrides it to bump the settings change

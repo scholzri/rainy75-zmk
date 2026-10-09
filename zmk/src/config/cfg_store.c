@@ -108,9 +108,14 @@ static int encode(const struct cfg_def *d, const struct cfg_value *v, char *buf,
 static int cfg_store_set(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
     char buf[CFG_STORE_BUF];
     struct cfg_value v;
-    int i = cfg_find(name, strlen(name));
     ssize_t rd;
+    int i;
 
+    if (name == NULL) { /* a stored key exactly "rainy_cfg": no remainder to match */
+        LOG_WRN("stored setting without a name ignored");
+        return 0;
+    }
+    i = cfg_find(name, strlen(name));
     if (i < 0 || len > sizeof(buf)) {
         LOG_WRN("stored setting %s ignored", name);
         return 0;
