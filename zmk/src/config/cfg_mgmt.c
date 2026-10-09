@@ -6,12 +6,14 @@
  * docs/config-protocol.md.
  *   0 read  info  {}                 -> {rc, v, n, fx, rev}
  *   1 read  list  {i?}               -> {rc, s: [[key, type, a, b, flags]...], next?}
- *   2 read  get   {i?} or {k: [...]} -> {rc, v: {key: value...}, next?}
+ *   2 read  get   {i?} or {k: [...], i?} -> {rc, v: {key: value...}, next?}
  *   3 write set   {k, v}             -> {rc, v (as stored)}
  *   4 write reset {k?: [...]}        -> {rc}
  * list and get page so that every reply fits one mcumgr buffer (512 bytes):
  * the size of each entry is estimated generously, a page holds entries up
- * to CFG_PAGE_BUDGET bytes, and at least one.
+ * to CFG_PAGE_BUDGET bytes, and at least one. get pages by key too: with k,
+ * i indexes into k (a key listed twice is answered once); the client
+ * continues with the same request and i = next.
  */
 
 #include <errno.h>
@@ -299,18 +301,27 @@ static int cfg_mgmt_list(struct smp_streamer *ctxt) {
     return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
 }
 
-static bool put_kv(zcbor_state_t *zse, uint8_t i) {
+/* Encode setting i as key and value unless that would pass the page budget
+ * (the first entry of a page always goes in): 1 encoded, 0 page full and
+ * nothing encoded, -1 encoding failed. */
+static int put_kv_paged(zcbor_state_t *zse, uint8_t i, size_t *used) {
     const struct cfg_def *d = cfg_def(i);
     struct cfg_value v;
+    size_t s;
 
     cfg_get(i, &v);
-    return put_str(zse, d->key) && put_value(zse, d, &v);
+    s = value_size(d, &v);
+    if (*used > 0 && *used + s > CFG_PAGE_BUDGET) {
+        return 0;
+    }
+    *used += s;
+    return (put_str(zse, d->key) && put_value(zse, d, &v)) ? 1 : -1;
 }
 
 static int cfg_mgmt_get(struct smp_streamer *ctxt) {
     zcbor_state_t *zse = ctxt->writer->zs;
     zcbor_state_t *zsd = ctxt->reader->zs;
-    uint32_t start = 0, i = 0;
+    uint32_t start = 0, pos, total;
     size_t decoded, used = 0;
     struct key_list kl = {0};
     uint8_t ids[CFG_MAX];
@@ -332,30 +343,29 @@ static int cfg_mgmt_get(struct smp_streamer *ctxt) {
         }
         ids[j] = x;
     }
+    total = by_key ? kl.n : cfg_count();
     ok = zcbor_tstr_put_lit(zse, "rc") && zcbor_int32_put(zse, 0) &&
          zcbor_tstr_put_lit(zse, "v") && zcbor_map_start_encode(zse, CFG_MAX);
-    if (by_key) {
-        for (uint8_t j = 0; ok && j < kl.n; j++) {
-            ok = put_kv(zse, ids[j]);
-        }
-    } else {
-        for (i = start; ok && i < cfg_count(); i++) {
-            const struct cfg_def *d = cfg_def(i);
-            struct cfg_value v;
-            size_t s;
+    for (pos = start; ok && pos < total; pos++) {
+        uint8_t id = by_key ? ids[pos] : pos;
+        bool dup = false;
+        int r;
 
-            cfg_get(i, &v);
-            s = value_size(d, &v);
-            if (i > start && used + s > CFG_PAGE_BUDGET) {
-                break;
-            }
-            used += s;
-            ok = put_str(zse, d->key) && put_value(zse, d, &v);
+        for (uint32_t j = 0; by_key && j < pos; j++) {
+            dup = dup || ids[j] == id;
         }
+        if (dup) {
+            continue;
+        }
+        r = put_kv_paged(zse, id, &used);
+        if (r == 0) {
+            break;
+        }
+        ok = r > 0;
     }
     ok = ok && zcbor_map_end_encode(zse, CFG_MAX);
-    if (ok && !by_key && i < cfg_count()) {
-        ok = zcbor_tstr_put_lit(zse, "next") && zcbor_uint32_put(zse, i);
+    if (ok && pos < total) {
+        ok = zcbor_tstr_put_lit(zse, "next") && zcbor_uint32_put(zse, pos);
     }
     return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
 }
@@ -382,6 +392,9 @@ static int cfg_mgmt_set(struct smp_streamer *ctxt) {
     i = cfg_find((const char *)key.value, key.len);
     if (i < 0) {
         return MGMT_ERR_ENOENT;
+    }
+    if (cfg_def(i)->flags & CFG_F_RO) {
+        return MGMT_ERR_EACCESSDENIED;
     }
     rc = to_value(cfg_def(i), &a, &in);
     if (rc == 0) {
