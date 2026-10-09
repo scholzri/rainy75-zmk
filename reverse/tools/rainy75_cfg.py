@@ -12,8 +12,9 @@ Usage:
     rainy75_cfg.py reset [KEY ...]      # back to the defaults (all, or the named ones)
     rainy75_cfg.py --ble get            # over Bluetooth (needs bleak; see rainy75_rgb_ble.py)
 
-Values: on/off for switches, numbers, names for choices, colours as
-#RRGGBB, lists as comma-separated names (set rgb.cycle solid,plasma,wave).
+Values: on/off for switches, numbers, names for choices, colours as RRGGBB
+(FF8000, or quoted '#FF8000': an unquoted # starts a shell comment), lists as
+comma-separated names (set rgb.cycle solid,plasma,wave).
 """
 
 import argparse
@@ -28,6 +29,8 @@ CMD_INFO, CMD_LIST, CMD_GET, CMD_SET, CMD_RESET = range(5)
 READ, WRITE = smp.SMP_OP_READ_REQ, smp.SMP_OP_WRITE_REQ
 
 RC_TEXT = {3: "invalid value", 5: "unknown setting", 7: "reply too large",
+           8: "not supported: this firmware has no runtime settings "
+              "(mcumgr group 67), update it",
            11: "read-only setting"}
 
 
@@ -35,6 +38,12 @@ class DeviceError(Exception):
     def __init__(self, rc):
         super().__init__(f"keyboard refused: {RC_TEXT.get(rc, 'error')} (rc {rc})")
         self.rc = rc
+
+
+# What main() reports as one line: the keyboard's refusal, a bad value, a missing
+# or unreachable keyboard (no port, tty permission, BLE connect, no bleak), a timeout.
+FAILURES = (DeviceError, ValueError, RuntimeError, OSError, TimeoutError,
+            asyncio.TimeoutError, ImportError)
 
 
 def cbor(v):
@@ -64,7 +73,10 @@ def parse_value(entry, text):
             return False
         raise ValueError(f"{key}: expected on or off, got {text!r}")
     if typ == "u":
-        n = int(text, 0)
+        try:
+            n = int(text, 0)
+        except ValueError:
+            raise ValueError(f"{key}: {text!r} is not a number") from None
         if not a <= n <= b:
             raise ValueError(f"{key}: {n} is outside {a}..{b}")
         return n
@@ -99,7 +111,8 @@ def format_value(entry, v):
 
 def describe(entry):
     _, typ, a, b, flags = entry
-    text = {"b": "on/off", "c": "colour #RRGGBB"}.get(typ)
+    # A type this client does not know is shown as such, never dropped or fatal.
+    text = {"b": "on/off", "c": "colour #RRGGBB"}.get(typ, f"unknown type {typ!r}")
     if typ == "u":
         text = f"{a}..{b}"
     elif typ == "e":
@@ -200,7 +213,8 @@ def run(link, a):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", help="serial port (default: found by USB name)")
     ap.add_argument("--ble", action="store_true", help="use Bluetooth instead of USB")
     ap.add_argument("--address", help="Bluetooth address (default: by name)")
@@ -216,13 +230,18 @@ def main(argv=None):
     r.add_argument("keys", nargs="*")
     a = ap.parse_args(argv)
 
-    link = BleLink(a.address) if a.ble else SerialLink(a.port)
+    link = None
     try:
+        link = BleLink(a.address) if a.ble else SerialLink(a.port)
         run(link, a)
-    except (DeviceError, ValueError) as e:
-        sys.exit(str(e))
+    except FAILURES as e:  # one line, no traceback: first contact with a missing keyboard
+        sys.exit(str(e) or type(e).__name__)
     finally:
-        link.close()
+        if link is not None:
+            try:
+                link.close()
+            except FAILURES:
+                pass
 
 
 if __name__ == "__main__":

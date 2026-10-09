@@ -1,5 +1,7 @@
 """Unit tests for rainy75_cfg.py (no hardware needed)."""
 import argparse
+import contextlib
+import io
 import unittest
 
 import rainy75_cfg as c
@@ -40,6 +42,12 @@ class ParseValue(unittest.TestCase):
         with self.assertRaises(ValueError):
             c.parse_value(ENTRIES["rgb.val"], "300")
 
+    def test_uint_not_a_number_names_key(self):
+        with self.assertRaises(ValueError) as cm:
+            c.parse_value(ENTRIES["rgb.val"], "abc")
+        self.assertIn("rgb.val", str(cm.exception))
+        self.assertIn("not a number", str(cm.exception))
+
     def test_enum(self):
         self.assertEqual(c.parse_value(ENTRIES["rgb.effect"], "plasma"), "plasma")
         with self.assertRaises(ValueError):
@@ -71,6 +79,12 @@ class Format(unittest.TestCase):
         self.assertEqual(c.describe(ENTRIES["rgb.on"]), "on/off")
         self.assertIn("plasma", c.describe(ENTRIES["rgb.effect"]))
         self.assertTrue(c.describe(ENTRIES["kb.os_keys"]).endswith("(read-only)"))
+
+    def test_describe_unknown_type_does_not_raise(self):
+        text = c.describe(["x.new", "x", None, None, 0])
+        self.assertIsInstance(text, str)
+        self.assertIn("unknown", text)
+        self.assertTrue(c.describe(["x.new", "x", None, None, 1]).endswith("(read-only)"))
 
 
 class FakeLink:
@@ -142,6 +156,22 @@ class Run(unittest.TestCase):
     def test_device_error_names_rc(self):
         self.assertIn("unknown setting", str(c.DeviceError(5)))
         self.assertIn("read-only", str(c.DeviceError(11)))
+
+    def test_device_error_enotsup_says_old_firmware(self):
+        self.assertIn("not supported", str(c.DeviceError(8)))
+        self.assertIn("update", str(c.DeviceError(8)))
+
+    def test_list_shows_unknown_type_and_keeps_others(self):
+        link = FakeLink({(c.READ, c.CMD_LIST, 0): {
+            "rc": 0, "s": [ENTRIES["rgb.on"], ["x.new", "x", None, None, 0],
+                           ENTRIES["rgb.val"]]}})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            c.run(link, argparse.Namespace(cmd="list"))
+        lines = out.getvalue().splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertIn("unknown", lines[1])
+        self.assertIn("16..255", lines[2])
 
 
 if __name__ == "__main__":
