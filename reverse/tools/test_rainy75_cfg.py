@@ -213,14 +213,44 @@ class FakeKb:
 class FakeKbConnect:
     """connect() fails after the link came up (start_notify); records the cleanup."""
 
-    def __init__(self):
+    def __init__(self, disconnect_exc=None):
         self.disconnected = False
+        self.disconnect_exc = disconnect_exc
 
     async def connect(self):
         raise FakeBleakError("start_notify failed")
 
     async def disconnect(self):
         self.disconnected = True
+        if self.disconnect_exc:
+            raise self.disconnect_exc
+
+
+class FakeDBusError(FakeBleakError):
+    """Like bleak's BleakDBusError: args (dbus_error, *body) and its own __str__."""
+
+    def __str__(self):
+        return f"[{self.args[0]}] {self.args[1]} (Write Not Permitted)"
+
+
+class BleakText(unittest.TestCase):
+    def test_own_str_is_kept(self):
+        e = FakeDBusError("org.bluez.Error.Failed", "ATT error: 0x03")
+        self.assertEqual(c._bleak_text(e),
+                         "[org.bluez.Error.Failed] ATT error: 0x03 (Write Not Permitted)")
+
+    def test_code_and_text_gives_the_text(self):
+        e = FakeBleakError(3, "GATT Protocol Error: Write Not Permitted")
+        self.assertEqual(c._bleak_text(e), "GATT Protocol Error: Write Not Permitted")
+
+    def test_text_and_reason_gives_the_text(self):
+        # BleakBluetoothNotAvailableError(msg, reason): reason is an enum, not a str
+        self.assertEqual(c._bleak_text(FakeBleakError("Bluetooth is off", object())),
+                         "Bluetooth is off")
+
+    def test_plain_and_empty(self):
+        self.assertEqual(c._bleak_text(FakeBleakError("Not connected")), "Not connected")
+        self.assertEqual(c._bleak_text(FakeBleakError()), "Bluetooth error")
 
 
 class BleErrors(unittest.TestCase):
@@ -273,6 +303,17 @@ class BleErrors(unittest.TestCase):
         link.loop = asyncio.new_event_loop()
         link._bleak_error = FakeBleakError
         link.kb = FakeKbConnect()
+        with self.assertRaises(RuntimeError) as cm:
+            link._connect()
+        self.assertEqual(str(cm.exception), "start_notify failed")
+        self.assertTrue(link.kb.disconnected)
+        self.assertTrue(link.loop.is_closed())
+
+    def test_failing_cleanup_keeps_the_connect_error(self):
+        link = object.__new__(c.BleLink)
+        link.loop = asyncio.new_event_loop()
+        link._bleak_error = FakeBleakError
+        link.kb = FakeKbConnect(disconnect_exc=FakeBleakError("disconnect failed"))
         with self.assertRaises(RuntimeError) as cm:
             link._connect()
         self.assertEqual(str(cm.exception), "start_notify failed")

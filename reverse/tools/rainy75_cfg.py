@@ -172,10 +172,15 @@ class SerialLink:
 
 
 def _bleak_text(e):
-    """One line for a bleak error: BleakGATTProtocolError carries (code, text)
-    in args, which str() would print as a tuple."""
-    if len(e.args) > 1 and isinstance(e.args[-1], str):
-        return e.args[-1]
+    """One line for a bleak error. Two bleak errors print as a tuple because they
+    carry two args and no __str__: BleakGATTProtocolError (code, text) and
+    BleakBluetoothNotAvailableError (text, reason). Everything else keeps its own
+    str(), e.g. BleakDBusError's "[org.bluez.Error.Failed] ATT error: 0x03 (...)"."""
+    a = e.args
+    if len(a) == 2 and isinstance(a[0], int) and isinstance(a[1], str):
+        return a[1]
+    if len(a) == 2 and isinstance(a[0], str) and not isinstance(a[1], str):
+        return a[0]
     return str(e) or "Bluetooth error"
 
 
