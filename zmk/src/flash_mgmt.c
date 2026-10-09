@@ -19,7 +19,7 @@
  * are disabled before the destructive work begins.
  *
  * Copyright (c) 2025 scholzri
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <zephyr/kernel.h>
