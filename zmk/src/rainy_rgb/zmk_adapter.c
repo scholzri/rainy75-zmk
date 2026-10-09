@@ -13,7 +13,12 @@
 #include <zmk/events/layer_state_changed.h>
 #include <zmk/events/hid_indicators_changed.h>
 #include <zmk/events/battery_state_changed.h>
-#include <zmk/events/activity_state_changed.h>
+#include <zmk/behavior.h>
+#include <zmk/matrix.h>
+#if IS_ENABLED(CONFIG_ZMK_USB)
+#include <zmk/usb.h>
+#include <zmk/events/usb_conn_state_changed.h>
+#endif
 #include "engine.h"
 #include "overlay.h"
 
@@ -193,6 +198,38 @@ static int rrgb_overlay_early_init(void) {
 }
 SYS_INIT(rrgb_overlay_early_init, POST_KERNEL, 99);
 
+/* --- Fn-highlight keys from the live keymap ------------------------------
+ * The keys lit while the Fn layer (layer id 1, as tested below) is held are
+ * the positions whose layer-1 binding is not &trans. The set is rebuilt from
+ * ZMK's keymap each time the layer becomes active, so it follows every change
+ * ZMK Studio makes (binding edits, also unsaved ones, save, discard and its
+ * "restore stock settings", which raises no event) and costs nothing while
+ * the layer is not held. Runs in the layer listener (system workqueue, the
+ * key event path): 83 binding lookups. With one physical layout the binding
+ * index is the keymap position (physical_layouts.c identity map). */
+#define RRGB_FN_LAYER 1
+
+#if DT_HAS_COMPAT_STATUS_OKAY(zmk_behavior_transparent)
+#define RRGB_TRANS_NAME DEVICE_DT_NAME(DT_INST(0, zmk_behavior_transparent))
+#else
+#define RRGB_TRANS_NAME NULL /* no &trans in this build: every bound key lights */
+#endif
+
+static const char *rrgb_fn_dev_at(uint16_t pos, void *ctx) {
+    const struct zmk_behavior_binding *b =
+        zmk_keymap_get_layer_binding_at_idx(RRGB_FN_LAYER, pos);
+
+    ARG_UNUSED(ctx);
+    return b != NULL ? b->behavior_dev : NULL;
+}
+
+static void rrgb_fn_keys_refresh(void) {
+    uint32_t mask[RRGB_FN_MASK_WORDS];
+
+    rrgb_fn_mask_build(rrgb_fn_dev_at, NULL, ZMK_KEYMAP_LEN, RRGB_TRANS_NAME, mask);
+    rrgb_overlay_set_fn_keys(mask);
+}
+
 static int rrgb_event_listener(const zmk_event_t *eh) {
     const struct zmk_position_state_changed *ev = as_zmk_position_state_changed(eh);
     if (ev) {
@@ -203,7 +240,14 @@ static int rrgb_event_listener(const zmk_event_t *eh) {
     }
 
     const struct zmk_layer_state_changed *lev = as_zmk_layer_state_changed(eh);
-    if (lev) { rrgb_overlay_set_fn(zmk_keymap_layer_active(1)); }
+    if (lev) {
+        bool fn = zmk_keymap_layer_active(RRGB_FN_LAYER);
+
+        if (fn) {
+            rrgb_fn_keys_refresh();   /* before the first frame that shows it */
+        }
+        rrgb_overlay_set_fn(fn);
+    }
 
     const struct zmk_hid_indicators_changed *iev = as_zmk_hid_indicators_changed(eh);
     if (iev) { rrgb_overlay_set_caps((iev->indicators & BIT(1)) != 0); }
@@ -211,9 +255,13 @@ static int rrgb_event_listener(const zmk_event_t *eh) {
     const struct zmk_battery_state_changed *bev = as_zmk_battery_state_changed(eh);
     if (bev) { rrgb_overlay_set_battery(bev->state_of_charge); }
 
-#if IS_ENABLED(CONFIG_RAINY_RGB_IDLE_BLANK)
-    const struct zmk_activity_state_changed *aev = as_zmk_activity_state_changed(eh);
-    if (aev) { rrgb_set_idle(aev->state != ZMK_ACTIVITY_ACTIVE); }
+#if IS_ENABLED(CONFIG_ZMK_USB)
+    /* rgb.val_battery and ind.bat_low apply while no USB host is connected.
+     * zmk_usb_is_hid_ready(): a host configured the keyboard, also while it
+     * suspends the bus (PC asleep); a cable pull goes through a bus reset,
+     * which clears it (zmk usb.c). The event's conn_state alone would count
+     * an unconfigured SUSPEND as a host. */
+    if (as_zmk_usb_conn_state_changed(eh)) { rrgb_set_usb_host(zmk_usb_is_hid_ready()); }
 #endif
 
     return ZMK_EV_EVENT_BUBBLE;   /* passive observer */
@@ -223,14 +271,17 @@ ZMK_SUBSCRIPTION(rrgb_listener, zmk_position_state_changed);
 ZMK_SUBSCRIPTION(rrgb_listener, zmk_layer_state_changed);
 ZMK_SUBSCRIPTION(rrgb_listener, zmk_hid_indicators_changed);
 ZMK_SUBSCRIPTION(rrgb_listener, zmk_battery_state_changed);
-#if IS_ENABLED(CONFIG_RAINY_RGB_IDLE_BLANK)
-ZMK_SUBSCRIPTION(rrgb_listener, zmk_activity_state_changed);
+#if IS_ENABLED(CONFIG_ZMK_USB)
+ZMK_SUBSCRIPTION(rrgb_listener, zmk_usb_conn_state_changed);
 #endif
 
 static int rrgb_overlay_seed(void) {
     rrgb_overlay_set_caps((zmk_hid_indicators_get_current_profile() & BIT(1)) != 0);
-    rrgb_overlay_set_fn(zmk_keymap_layer_active(1));
+    rrgb_overlay_set_fn(zmk_keymap_layer_active(RRGB_FN_LAYER));
     rrgb_overlay_set_battery(zmk_battery_state_of_charge());
+#if IS_ENABLED(CONFIG_ZMK_USB)
+    rrgb_set_usb_host(zmk_usb_is_hid_ready());
+#endif
     return 0;
 }
 SYS_INIT(rrgb_overlay_seed, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
