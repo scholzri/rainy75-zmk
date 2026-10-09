@@ -2,9 +2,10 @@
  * Copyright (c) 2026 scholzri
  * SPDX-License-Identifier: Apache-2.0
  *
- * The runtime settings of this keyboard (cfg_table.c). Owners read values
- * with cfg_u(CFG_...). New settings are only ever appended (stable indexes
- * are not part of the protocol, keys are, but appending keeps diffs small).
+ * The runtime settings of this keyboard (cfg_table.c). Owners get the
+ * non-proxied values pushed (push() in cfg_table.c) or read them with
+ * cfg_u(CFG_...). New settings are only ever appended (stable indexes are
+ * not part of the protocol, keys are, but appending keeps diffs small).
  */
 
 #ifndef RAINY75_CFG_TABLE_H
@@ -18,6 +19,15 @@ enum cfg_id {
     CFG_RGB_VAL,
     CFG_RGB_SPEED,
     CFG_RGB_BOOT_EFFECT,
+    CFG_RGB_CYCLE,
+    CFG_RGB_VAL_BATTERY,
+    CFG_RGB_IDLE_S,
+    CFG_RGB_IDLE_MODE,
+    CFG_IND_CAPS_STYLE,
+    CFG_IND_CAPS_COLOR,
+    CFG_IND_FN_HIGHLIGHT,
+    CFG_IND_PASSKEY_GUIDE,
+    CFG_IND_BAT_LOW,
     CFG_ID_COUNT
 };
 
