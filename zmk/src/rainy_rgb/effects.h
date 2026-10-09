@@ -30,6 +30,8 @@ struct rrgb_effect {
 /* Registry (defined in effects.c). */
 extern const struct rrgb_effect rrgb_effects[];
 extern const uint16_t rrgb_effect_count;
+/* Name of effect idx, NULL past the end (a cfg_name_fn for the settings). */
+const char *rrgb_effect_name(uint8_t idx);
 
 /* Individual effects (host-testable). */
 void fx_solid(struct rgb_frame *f);

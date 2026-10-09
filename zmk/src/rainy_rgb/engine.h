@@ -27,6 +27,27 @@ void rrgb_get_persist(struct rrgb_persist *out);
 void rrgb_set_persist(const struct rrgb_persist *in);
 void rrgb_request_save(void); /* implemented in state.c */
 
+/* --- Single parameters (runtime settings, config/cfg_table.c) ---
+ * The persisted state as single values. A set clamps like a load, leaves
+ * host mode (the new value should be visible) and saves like a Fn key. */
+enum rrgb_param {
+    RRGB_P_ON,
+    RRGB_P_EFFECT,
+    RRGB_P_HUE,
+    RRGB_P_SAT,
+    RRGB_P_VAL,
+    RRGB_P_SPEED,
+};
+uint32_t rrgb_param_get(uint8_t p);
+void rrgb_param_set(uint8_t p, uint32_t v);
+/* Effect after boot (setting rgb.boot_effect); not saved, the persisted
+ * effect stays what the user last chose. */
+void rrgb_apply_boot_effect(uint8_t effect);
+/* Called after every state change (Fn keys, rrgb_param_set). The default
+ * does nothing; config/cfg_table.c overrides it to bump the settings change
+ * counter. */
+void rrgb_state_changed_hook(void);
+
 /* --- Host-controlled direct pixel mode (rgb_mgmt mcumgr group) ---
  * While active, the host's pixel buffer replaces the effect layer; functional
  * overlays (CapsLock / Fn-highlight / battery) still render on top. Any
