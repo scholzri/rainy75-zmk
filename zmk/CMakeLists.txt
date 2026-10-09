@@ -57,6 +57,7 @@ if(CONFIG_RAINY75_CONFIG)
   zephyr_library_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
   zephyr_library_sources(
     src/config/cfg_registry.c
+    src/config/cfg_codec.c
     src/config/cfg_table.c
     src/config/cfg_store.c
     src/config/cfg_mgmt.c

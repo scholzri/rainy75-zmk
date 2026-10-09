@@ -2,6 +2,8 @@
 set -e
 cd "$(dirname "$0")"
 CC=${CC:-gcc}
-echo "== test_cfg_registry =="
-$CC -std=c11 -Wall -Wextra -O1 -o "${TMPDIR:-/tmp}/test_cfg_registry" test_cfg_registry.c ../cfg_registry.c
-"${TMPDIR:-/tmp}/test_cfg_registry"
+for t in test_cfg_registry test_cfg_codec; do
+    echo "== $t =="
+    $CC -std=c11 -Wall -Wextra -O1 -o "${TMPDIR:-/tmp}/$t" "$t.c" ../cfg_registry.c ../cfg_codec.c
+    "${TMPDIR:-/tmp}/$t"
+done
