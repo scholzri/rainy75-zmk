@@ -55,6 +55,7 @@ static volatile uint8_t s_vf_slot;
 static volatile uint32_t s_vf_t0;
 static volatile bool s_df_on;            /* keys 1..6 follow the red flash of s_df_slot */
 static volatile uint8_t s_df_slot;
+static volatile bool s_guide = true;     /* ind.passkey_guide: number row guidance shown */
 
 static int32_t since(uint32_t tick, uint32_t t0) { return (int32_t)(tick - t0); }
 
@@ -181,6 +182,7 @@ void rrgb_ble_set_slots(const uint8_t state[3], uint8_t active, uint32_t tick) {
 
 void rrgb_ble_set_output_ble(bool ble) { s_output_ble = ble; }
 void rrgb_ble_set_fn(bool held)        { s_fn = held; }
+void rrgb_ble_set_passkey_guide(bool on) { s_guide = on; }
 
 static void pk_end(uint8_t slot) {
 	if (s_pk_on && s_pk_slot == slot) { s_pk_on = false; }
@@ -252,8 +254,16 @@ void rrgb_ble_event(enum rrgb_ble_ev ev, uint8_t slot, uint8_t arg, uint32_t tic
 	}
 }
 
+/* The number row guidance (passkey digits, red digit flash) runs and is
+ * switched on (ind.passkey_guide). The verify chase counts separately: it
+ * also makes its slot blink (steady_auto), which is slot status and stays
+ * when the guidance is off. */
+static bool guide_running(uint32_t tick) {
+	return s_guide && (pk_running(tick) || df_running(tick));
+}
+
 bool rrgb_ble_active(uint32_t tick) {
-	if (s_fn || pk_running(tick) || vf_running(tick) || df_running(tick)) { return true; }
+	if (s_fn || guide_running(tick) || vf_running(tick)) { return true; }
 	for (uint8_t s = 0; s < RRGB_BLE_SLOTS; s++) {
 		if (anim_running(s, tick)) { return true; }
 	}
@@ -261,7 +271,7 @@ bool rrgb_ble_active(uint32_t tick) {
 }
 
 bool rrgb_ble_suppress_effect(uint32_t tick) {
-	if (pk_running(tick) || vf_running(tick) || df_running(tick)) { return true; }
+	if (guide_running(tick) || vf_running(tick)) { return true; }
 	for (uint8_t s = 0; s < RRGB_BLE_SLOTS; s++) {
 		if (anim_running(s, tick)) { return true; }
 	}
@@ -329,6 +339,7 @@ bool rrgb_ble_render(struct rrgb *px, uint16_t n, uint32_t tick) {
 			       s_output_ble ? cyan(RRGB_BLE_OUT) : white(RRGB_BLE_OUT));
 	}
 
+	if (!s_guide) { return painted; }   /* ind.passkey_guide off: the number row is not ours */
 	if (pk_running(tick)) {
 		for (uint8_t k = 0; k < 10; k++) {
 			struct rrgb c = k < s_pk_digits ? blue(RRGB_BLE_BRIGHT) : white(RRGB_BLE_DIM);

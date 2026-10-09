@@ -72,7 +72,8 @@ struct rrgb_ble_keys {
 };
 
 /* Stores the key table and resets all state (all slots EMPTY, no active
- * slot, output USB, Fn released, no animation). */
+ * slot, output USB, Fn released, no animation). The passkey guide setting
+ * (rrgb_ble_set_passkey_guide) is kept. */
 void rrgb_ble_init(const struct rrgb_ble_keys *keys);
 
 /* Polled slot states for slots 0..2 and the active slot index (>= 3: none
@@ -92,6 +93,13 @@ void rrgb_ble_init(const struct rrgb_ble_keys *keys);
 void rrgb_ble_set_slots(const uint8_t state[3], uint8_t active, uint32_t tick);
 void rrgb_ble_set_output_ble(bool ble);
 void rrgb_ble_set_fn(bool held);
+/* ind.passkey_guide (default on). Off: the number row and Enter show no
+ * passkey guidance (digits, Enter pulse, verify chase, red digit flash), and
+ * that guidance neither keeps the overlay active nor turns the effect off;
+ * the slot keys keep their status (the slot verifying a passkey still
+ * blinks). Events are still tracked, so switching it on during a pairing
+ * shows the guidance at once. */
+void rrgb_ble_set_passkey_guide(bool on);
 void rrgb_ble_event(enum rrgb_ble_ev ev, uint8_t slot, uint8_t arg, uint32_t tick);
 
 /* Paints only the keys it owns; returns true if it painted anything this frame. */
