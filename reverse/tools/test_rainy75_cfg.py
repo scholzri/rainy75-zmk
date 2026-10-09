@@ -1,0 +1,148 @@
+"""Unit tests for rainy75_cfg.py (no hardware needed)."""
+import argparse
+import unittest
+
+import rainy75_cfg as c
+
+EFFECTS = ["solid", "rainbow", "plasma"]
+ENTRIES = {
+    "rgb.on": ["rgb.on", "b", None, None, 0],
+    "rgb.val": ["rgb.val", "u", 16, 255, 0],
+    "rgb.effect": ["rgb.effect", "e", EFFECTS, None, 0],
+    "ind.caps_color": ["ind.caps_color", "c", None, None, 0],
+    "rgb.cycle": ["rgb.cycle", "l", EFFECTS, None, 0],
+    "kb.os_keys": ["kb.os_keys", "u", 0, 83, 1],
+}
+
+
+class Cbor(unittest.TestCase):
+    def test_scalars(self):
+        self.assertEqual(c.cbor(True), b"\xf5")
+        self.assertEqual(c.cbor(False), b"\xf4")
+        self.assertEqual(c.cbor(5), b"\x05")
+        self.assertEqual(c.cbor(300), b"\x19\x01\x2c")
+        self.assertEqual(c.cbor("ab"), b"\x62ab")
+
+    def test_list(self):
+        self.assertEqual(c.cbor(["a", "b"]), b"\x82\x61a\x61b")
+        self.assertEqual(c.cbor([]), b"\x80")
+
+
+class ParseValue(unittest.TestCase):
+    def test_bool(self):
+        self.assertIs(c.parse_value(ENTRIES["rgb.on"], "on"), True)
+        self.assertIs(c.parse_value(ENTRIES["rgb.on"], "0"), False)
+        with self.assertRaises(ValueError):
+            c.parse_value(ENTRIES["rgb.on"], "maybe")
+
+    def test_uint_range(self):
+        self.assertEqual(c.parse_value(ENTRIES["rgb.val"], "120"), 120)
+        with self.assertRaises(ValueError):
+            c.parse_value(ENTRIES["rgb.val"], "300")
+
+    def test_enum(self):
+        self.assertEqual(c.parse_value(ENTRIES["rgb.effect"], "plasma"), "plasma")
+        with self.assertRaises(ValueError):
+            c.parse_value(ENTRIES["rgb.effect"], "fire")
+
+    def test_colour(self):
+        self.assertEqual(c.parse_value(ENTRIES["ind.caps_color"], "#FF8000"), 0xFF8000)
+        self.assertEqual(c.parse_value(ENTRIES["ind.caps_color"], "0x0000ff"), 0xFF)
+        with self.assertRaises(ValueError):
+            c.parse_value(ENTRIES["ind.caps_color"], "#1000000")
+
+    def test_list(self):
+        self.assertEqual(c.parse_value(ENTRIES["rgb.cycle"], "plasma,solid"),
+                         ["plasma", "solid"])
+        self.assertEqual(c.parse_value(ENTRIES["rgb.cycle"], ""), [])
+        with self.assertRaises(ValueError):
+            c.parse_value(ENTRIES["rgb.cycle"], "solid,fire")
+
+
+class Format(unittest.TestCase):
+    def test_values(self):
+        self.assertEqual(c.format_value(ENTRIES["rgb.on"], True), "on")
+        self.assertEqual(c.format_value(ENTRIES["ind.caps_color"], 0xFF8000), "#FF8000")
+        self.assertEqual(c.format_value(ENTRIES["rgb.cycle"], ["a", "b"]), "a,b")
+        self.assertEqual(c.format_value(ENTRIES["rgb.val"], 120), "120")
+
+    def test_describe(self):
+        self.assertEqual(c.describe(ENTRIES["rgb.val"]), "16..255")
+        self.assertEqual(c.describe(ENTRIES["rgb.on"]), "on/off")
+        self.assertIn("plasma", c.describe(ENTRIES["rgb.effect"]))
+        self.assertTrue(c.describe(ENTRIES["kb.os_keys"]).endswith("(read-only)"))
+
+
+class FakeLink:
+    """Replies by (op, cmd, i); records every request."""
+
+    def __init__(self, replies):
+        self.replies = replies
+        self.sent = []
+
+    def request(self, op, cmd, fields):
+        self.sent.append((op, cmd, fields))
+        key = (op, cmd, dict(fields).get("i", 0))
+        return self.replies[key]
+
+
+class Paging(unittest.TestCase):
+    def test_list_follows_next(self):
+        link = FakeLink({
+            (c.READ, c.CMD_LIST, 0): {"rc": 0, "s": [ENTRIES["rgb.on"]], "next": 1},
+            (c.READ, c.CMD_LIST, 1): {"rc": 0, "s": [ENTRIES["rgb.val"]]},
+        })
+        self.assertEqual([e[0] for e in c.fetch_list(link)], ["rgb.on", "rgb.val"])
+
+    def test_get_all_follows_next(self):
+        link = FakeLink({
+            (c.READ, c.CMD_GET, 0): {"rc": 0, "v": {"rgb.on": True}, "next": 1},
+            (c.READ, c.CMD_GET, 1): {"rc": 0, "v": {"rgb.val": 120}},
+        })
+        self.assertEqual(c.fetch_values(link), {"rgb.on": True, "rgb.val": 120})
+
+    def test_get_by_key_single_request(self):
+        link = FakeLink({(c.READ, c.CMD_GET, 0): {"rc": 0, "v": {"rgb.val": 120}}})
+        self.assertEqual(c.fetch_values(link, ["rgb.val"]), {"rgb.val": 120})
+        self.assertEqual(link.sent, [(c.READ, c.CMD_GET, [("k", ["rgb.val"])])])
+
+    def test_get_by_key_follows_next(self):
+        link = FakeLink({
+            (c.READ, c.CMD_GET, 0): {"rc": 0, "v": {"rgb.on": True}, "next": 1},
+            (c.READ, c.CMD_GET, 1): {"rc": 0, "v": {"rgb.val": 120}},
+        })
+        self.assertEqual(c.fetch_values(link, ["rgb.on", "rgb.val"]),
+                         {"rgb.on": True, "rgb.val": 120})
+        self.assertEqual(link.sent, [
+            (c.READ, c.CMD_GET, [("k", ["rgb.on", "rgb.val"])]),
+            (c.READ, c.CMD_GET, [("k", ["rgb.on", "rgb.val"]), ("i", 1)]),
+        ])
+
+
+class Run(unittest.TestCase):
+    def test_set_sends_typed_value(self):
+        link = FakeLink({
+            (c.READ, c.CMD_LIST, 0): {"rc": 0, "s": list(ENTRIES.values())},
+            (c.WRITE, c.CMD_SET, 0): {"rc": 0, "v": "plasma"},
+        })
+        c.run(link, argparse.Namespace(cmd="set", key="rgb.effect", value="plasma"))
+        self.assertEqual(link.sent[-1], (c.WRITE, c.CMD_SET,
+                                         [("k", "rgb.effect"), ("v", "plasma")]))
+
+    def test_set_unknown_key_refused_locally(self):
+        link = FakeLink({(c.READ, c.CMD_LIST, 0): {"rc": 0, "s": list(ENTRIES.values())}})
+        with self.assertRaises(ValueError):
+            c.run(link, argparse.Namespace(cmd="set", key="rgb.nope", value="1"))
+
+    def test_reset_all_sends_empty_request(self):
+        link = FakeLink({(c.WRITE, c.CMD_RESET, 0): {"rc": 0}})
+        c.run(link, argparse.Namespace(cmd="reset", keys=[]))
+        self.assertEqual(link.sent, [(c.WRITE, c.CMD_RESET, [])])
+
+    def test_device_error_names_rc(self):
+        self.assertIn("unknown setting", str(c.DeviceError(5)))
+        self.assertIn("read-only", str(c.DeviceError(11)))
+
+
+if __name__ == "__main__":
+    unittest.main()
