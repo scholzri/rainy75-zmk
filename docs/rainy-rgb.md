@@ -14,15 +14,16 @@ Hardware-verified end to end on the physical keyboard (USB + BLE, mcuboot DFU).
 |------|----------------|
 | `color.{h,c}` | Pure 8-bit color math: `hsv2rgb`, `sin8`, `scale8`, `hypot8`. Host-tested. |
 | `effects.{h,c}` | `struct rgb_frame`, the effect registry, and all effect render functions (12 display effects, plus an opt-in `walker` diagnostic). Pure. |
-| `engine.{h,c}` | Owns `pixels[83]` + a dedicated **50 FPS render thread**; runtime state; the FPS-independent speed model; settings load; dispatch (effect → overlay → strip). |
+| `engine.{h,c}` | Owns `pixels[83]` + a dedicated **50 FPS render thread**; runtime state; the FPS-independent speed model; settings load; idle timer, battery cap and USB host state; dispatch (effect → overlay → strip). |
+| `lighting.{h,c}` | Brightness policy of the effect layer: battery cap (`rgb.val_battery`) and idle off/dim (`rgb.idle_s`, `rgb.idle_mode`). Pure, host-tested. |
 | `reactive.{h,c}` | Lock-free **SPSC press queue** (event thread → render thread) feeding an 8-slot ripple pool + per-LED `key_heat[83]`. |
-| `overlay.{h,c}` | Functional indicators (CapsLock / Fn-highlight / battery gauge / BLE slot status). Pure, ZMK-free. Owns the keymap-coupled key tables. |
+| `overlay.{h,c}` | Functional indicators (CapsLock style / Fn-highlight / battery gauge / low-battery pulse / BLE slot status). Pure, ZMK-free. Owns the keymap-coupled key positions (CapsLock, Esc, BLE keys); the Fn-highlight keys arrive as a mask built from the live keymap. |
 | `ble_status.{h,c}` | BLE slot status on F1..F4, passkey guidance on the number row and Enter: state machine + renderer, timing and brightness constants. Pure, ZMK-free, host-tested. |
 | `led_map.{h,c}` | Calibrated `pos_to_led[83]` + `led_positions[83]` (XY) + lookups. ISO and ANSI table variants (`CONFIG_RAINY_RGB_ANSI_LEDMAP`, set by `./build.sh --ansi`). |
 | `state.c` | NVS persistence (`SETTINGS_STATIC_HANDLER`, subtree `rainy_rgb/`, 2 s debounce). |
-| `zmk_adapter.{h,c}` | **ZMK boundary**: led_strip wrap + `ZMK_LISTENER`/`ZMK_SUBSCRIPTION` for position/layer/hid-indicators/battery → neutral setters; BLE profile/endpoint/auth events and BT connection callbacks → `ble_status` (one work item). |
+| `zmk_adapter.{h,c}` | **ZMK boundary**: led_strip wrap + `ZMK_LISTENER`/`ZMK_SUBSCRIPTION` for position/layer/hid-indicators/battery/USB → neutral setters; the Fn-highlight key mask from the live keymap; BLE profile/endpoint/auth events and BT connection callbacks → `ble_status` (one work item). |
 | `../behaviors/behavior_rainy_rgb.c` | **ZMK boundary**: the `&rgb` keymap behavior → engine API. |
-| `tests/test_{color,effects,overlay,ble_status}.c` | Host gcc unit tests (run `tests/run_host_tests.sh`). |
+| `tests/test_{color,effects,overlay,ble_status,lighting}.c` | Host gcc unit tests (run `tests/run_host_tests.sh`). |
 
 The board DTS exposes the strip as `chosen zmk,underglow = &led_strip` (driver
 `telink,b91-spi-led-strip`, PB7 MOSI, DMA ch4, ~6 MHz, GRB, PC2 = LED VCC MOSFET).
@@ -31,8 +32,11 @@ The board DTS exposes the strip as `chosen zmk,underglow = &led_strip` (driver
 
 ```
 reactive_tick (drain key presses → ripples + heat)
-  → effect renders into pixels[]  (or black base if RGB toggled off; scaled by the
-                                    effect gain, black while a BLE animation shows)
+  → effect renders into pixels[]  (at min(val, val_battery) without a USB host, a quarter
+                                    of that while idle dim; black base if RGB is off or
+                                    idle off; scaled by the effect gain, black while a BLE
+                                    animation shows)
+  → low-battery pulse on Esc  (only while the effect is drawn)
   → overlay_render  (Fn-highlight base-override, then CapsLock, then battery gauge,
                      then BLE slot status last)
   → led_strip_update_rgb  (~2.66 ms DMA; render thread sleeps on the End-IRQ)
@@ -56,12 +60,18 @@ render thread, never from an ISR/event callback. Frame rate is 50 FPS
 
 Spatial effects (ripple/wave/rain/heatmap) use the calibrated `led_positions[]` XY map.
 
+Fn+Enter steps through the runtime setting `rgb.cycle` (default: all effects in table
+order): the next entry after the current effect, or the first entry when the current
+effect is not in the list; an empty list means all effects. Example:
+`python3 reverse/tools/rainy75_cfg.py set rgb.cycle solid,plasma,wave`
+(see [config-protocol.md](config-protocol.md)).
+
 ## Controls (Fn layer)
 
 | Combo | Action |
 |-------|--------|
 | Fn+Backspace | RGB toggle (on/off) |
-| Fn+Enter | next effect |
+| Fn+Enter | next effect of `rgb.cycle` |
 | Fn+# (NUHS) | hue |
 | Fn+↑ / Fn+↓ | brightness |
 | Fn+→ / Fn+← | speed |
@@ -109,13 +119,22 @@ keypress, note which key each index sits under.
 Rendered on top of the active effect — and **still shown when RGB is toggled off**
 (they are functional, not decorative):
 
-- **CapsLock** → the CapsLock key glows **white** (`hid_indicators_changed`, bit 1).
-  Requires `CONFIG_ZMK_HID_INDICATORS=y`. Over BLE, some hosts never send the LED
-  report, so caps may not update on BLE.
-- **Fn-highlight** → while Fn (layer 1) is held, only keys with an Fn binding light
-  white, rest dark (`zmk_keymap_layer_active(1)`). The whole top row lights because
-  every top-row key is Fn-mapped (Studio/BT/output/media). Position set is
-  hardcoded in `overlay.c` `fn_keys[]` — **keymap-coupled**, update if the Fn layer changes.
+- **CapsLock** → by `ind.caps_style`: `key` (default) lights the CapsLock key in
+  `ind.caps_color` (default white), `tint` mixes every LED 50/50 with the colour, `off`
+  shows nothing (`hid_indicators_changed`, bit 1). Requires
+  `CONFIG_ZMK_HID_INDICATORS=y`. Over BLE, some hosts never send the LED report, so caps
+  may not update on BLE.
+- **Fn-highlight** (`ind.fn_highlight`, default on) → while Fn (layer id 1) is held, the
+  keys whose layer-1 binding is not `&trans` light white, the rest dark. The key set comes
+  from ZMK's live keymap (`zmk_keymap_get_layer_binding_at_idx()` in `zmk_adapter.c`),
+  rebuilt each time layer 1 becomes active, so it follows ZMK Studio edits (also unsaved
+  ones, a discard, and Studio's "restore stock settings", which raises no event). Off:
+  holding Fn leaves the lighting as it is; the BLE status still shows on F1..F4.
+- **Low battery** (`ind.bat_low`, 0..50 %, default 0 = off) → while no USB host is
+  connected and the battery level is below the threshold, Esc pulses red (2 s period) on
+  top of the effect. Only while the effect is drawn (RGB on, not idle off, no BLE
+  suppression, no host mode): the pulse never keeps the LED rail on by itself. A level of 0
+  (ZMK's value before its first battery sample) never pulses.
 - **Battery gauge** (Fn+B) → a 10-segment bar on the number row, level-colored
   (green→red), ~3 s. **Approximate** — the battery-ADC pin/divider/Vref are not yet
   hardware-validated (see Open items).
@@ -157,7 +176,8 @@ is BLE and for 30 s (`RRGB_BLE_STEADY_HOLD_FRAMES`) after the slot's last event
 (boot/wake, profile select, state change, end of a red flash or of the switch
 confirm, which comes first); after that the key
 stays dark and Fn shows the state. Event animations (red flash, connected fade,
-passkey guidance, verify chase) always show. The newest event per slot wins; several slots can
+passkey guidance, verify chase) always show (the number-row part only with `ind.passkey_guide`
+on). The newest event per slot wins; several slots can
 animate at once (multilink). The passkey guidance ends on Enter (passkey
 submitted), on pairing complete or failure, and at the latest 60 s after the
 last passkey event. After Enter the verify chase runs until pairing complete
@@ -180,6 +200,18 @@ recently connected slot, else stays; a pairing in progress (from the passkey
 request) pauses it, BT_CLR disarms it. Its event
 `rainy75_ble_open_profile_timeout` flashes the empty slot like FAILED.
 
+The runtime setting `ind.passkey_guide` (default on) switches the number-row guidance off
+(passkey digits, Enter pulse, verify chase, red digit flash). The digits, the Enter pulse
+and the red digit flash are then not drawn, do not turn the effect off and do not keep the
+frame loop alive (`guide_running()` in `ble_status.c`). Nothing on the keyboard reacts to a
+passkey request until Enter is pressed, so the host's pairing dialog is the only cue that
+digits are expected. After Enter the verify chase is still tracked and only its number-row
+painting is skipped: the slot being verified keeps blinking, the overlay stays active and
+the effect is off until the pairing ends (`rrgb_ble_active()`,
+`rrgb_ble_suppress_effect()`). F1..F4 keep the slot status. The events are tracked
+meanwhile, so switching the guide on during a pairing shows it at once
+(`rrgb_ble_set_passkey_guide()`).
+
 Fn-layer presses leave no reactive trace: while layer 1 is held,
 `rrgb_overlay_key_reactive()` is false and `rrgb_on_key()` skips the
 ripple/heat and `last_press_tick` for every press, not only F1..F4. All Fn
@@ -193,8 +225,8 @@ overlays (CapsLock, Fn-highlight, battery gauge): the switch confirm, the
 connected solid + fade, every red flash (lost, failed, cleared, open slot
 timeout, also on a background slot), the active slot's fast blink or breathe
 only while it is shown (BLE output, 30 s hold window, as gated above), the
-passkey guidance, the verify chase and the red digit flash.
-`rrgb_ble_suppress_effect(tick)` answers this; `rrgb_overlay_suppress_effect()`
+passkey guidance and the red digit flash (both only with `ind.passkey_guide` on) and the
+verify chase. `rrgb_ble_suppress_effect(tick)` answers this; `rrgb_overlay_suppress_effect()`
 adds the BLE build check. The Fn overview alone (including the blink shown
 only because Fn is held) does not count. The engine keeps an effect gain
 (`rrgb_effect_gain_next()`): down to 0 over 0.1 s
@@ -236,24 +268,35 @@ the strip is dark, so an animation that starts on a dark strip plays from its
 first frame. The work item logs `ble leds: slots a/b/c active n out ble|usb`
 on every polled change and `ble leds: <event> slot n digits d` per auth event.
 
-## Activity-idle blank (opt-in)
+## Idle off / dim and battery cap (runtime settings)
 
-With `CONFIG_RAINY_RGB_IDLE_BLANK=y` the strip turns **off after
-`CONFIG_ZMK_IDLE_TIMEOUT` of no activity** (typing / pointing) and comes back on
-the first keypress — while the board is still awake, before deep sleep. On
-wireless this saves the per-key LED current during idle-but-awake stretches
-(deep sleep already blanks everything; this covers the gap before it). The
-engine subscribes to ZMK's `activity_state_changed` event and gates the render
-loop on `rt.idle`. Host direct mode (`rgb_mgmt`) overrides the blank, so a host
-notification pulse still shows when the board is idle (that's when you're away).
-Off by default — `IS_ENABLED()` folds it out with zero behaviour change.
+`rgb.idle_s` (0..3600 s, default 0 = never) and `rgb.idle_mode` (`off` default, `dim`):
+after that long without a key position event (press or release) the effect turns off
+(`off`) or renders at a quarter of its brightness (`dim`); the next key event brings it
+back at once. A settings change from a host (`rainy75_cfg.py set`, the config page)
+restarts the timer too, so the change shows. The functional overlays (CapsLock,
+Fn-highlight, battery gauge, BLE status and passkey guidance) keep showing while idle;
+host direct mode (`rgb_mgmt`) overrides idle off, so a host notification pulse still shows
+when the board is idle (that's when you're away). With idle off and no overlay active the
+strip is dark and the LED rail is cut after 2 s, as with RGB off. The timer is rainy_rgb's
+own (`last_activity_ms` in `engine.c`, decision `rrgb_idle_state()` in `lighting.c`, read
+by the render loop every frame). It replaces `CONFIG_RAINY_RGB_IDLE_BLANK` (removed), which
+blanked the whole strip, indicators included, after ZMK's activity idle.
+
+`rgb.val_battery` (16..255, default 255 = no cap): while no USB host is connected, the
+effect renders at `min(rgb.val, rgb.val_battery)`; the stored `rgb.val` (Fn+↑/↓) does not
+change. "USB host connected" is ZMK's `zmk_usb_is_hid_ready()`: a host configured the
+keyboard, also while it suspends the bus (PC asleep); pulling the cable goes through a bus
+reset, which clears it. This board has no VBUS detection, so `zmk_usb_is_powered()` would
+stay true on battery. `zmk_adapter.c` follows the state through
+`zmk_usb_conn_state_changed` and logs `usb host connected` / `usb host gone`.
 
 ## LED power rail auto-cut (PC2)
 
 Blanking the data alone is not enough on battery: a dark WS2812 still draws
 ~0.5–1 mA quiescent, ~40–80 mA across the 83 LEDs. Whenever the strip has
-stayed dark for **2 s** (RGB toggled off with no overlay, or the activity-idle
-blank above), the render loop drops **PC2** — the MOSFET gate for LED VCC — and
+stayed dark for **2 s** (RGB toggled off or idle off, with no overlay active),
+the render loop drops **PC2** (the MOSFET gate for LED VCC) and
 restores it (with a 5 ms settle for WS2812 power-on reset) before the next lit
 frame. The 2 s hold-off keeps overlay flicker (CapsLock toggling) from bouncing
 the rail. The black frame from `clear_strip()` always goes out while the rail
@@ -304,6 +347,10 @@ has not been identified and the fault has not recurred since the trap went in.
 - `CONFIG_ZMK_HID_INDICATORS=y` (CapsLock). Enabling this changes the USB/BLE HID
   descriptor → **re-plug USB / reconnect BLE once after flashing** so hosts re-read it.
 - `CONFIG_NVS`/`CONFIG_SETTINGS_NVS` (persistence), `CONFIG_ZMK_BATTERY_REPORTING` (gauge)
+- `CONFIG_RAINY75_CONFIG=y`: the runtime settings of [config-protocol.md](config-protocol.md)
+  (`rgb.cycle`, `rgb.val_battery`, `rgb.idle_s`, `rgb.idle_mode`, `ind.*`). Without it the
+  engine and the overlay run on the same defaults. `CONFIG_RAINY_RGB_IDLE_BLANK` no longer
+  exists (use `rgb.idle_s`).
 
 ZMK is **pinned** in `zmk/west.yml` (not `main`) for reproducibility.
 
@@ -326,6 +373,15 @@ one writer. Single-core RISC-V → benign races by design, no locks.
 The host direct-pixel buffer follows the same pattern: the mcumgr (SMP) thread
 writes `host_px[]` + a `volatile` flag, the render thread copies it per frame —
 a torn write is a one-frame glitch at 50 FPS.
+
+Runtime settings reach the engine, the overlay and `ble_status` as single bytes or
+aligned words, written by the mcumgr thread (`set`/`reset`), the ZMK main thread (load at
+boot) or init, and read every frame by the render thread; a pair changed together (CapsLock
+style and colour, idle seconds and mode) can be torn for one frame. The Fn-highlight key
+mask is written by the layer listener (system workqueue) and read by the render thread; a
+torn read mixes old and new keys for one frame. The engine reads `rgb.cycle` from the
+settings registry (its list copy runs under a spinlock) only on Fn+Enter, on the key event
+path (system workqueue), never in the render thread.
 
 ## Host control (`rgb_mgmt`, mcumgr group 65)
 
@@ -351,8 +407,8 @@ lock the user out of their lighting.
 **Host mode also expires on its own** after
 `CONFIG_RGB_MGMT_HOST_TIMEOUT_S` (default 30 s) with no `set`/`fill`. Without
 that watchdog a host which dies without sending `clear` strands the board on its
-last frame forever: the idle blank cannot rescue it (host mode overrides the
-blank by design) and on battery nothing else intervenes. Undocking mid-animation
+last frame forever: idle off cannot rescue it (host mode overrides it by
+design) and on battery nothing else intervenes. Undocking mid-animation
 is the case that bites: the link dies before the host can retract the frame,
 and afterwards there is no host left to send anything. Host animations refresh
 continuously (largest gap is well under a second), so the timeout only fires
@@ -433,6 +489,13 @@ Notable `rainy_rgb` fixes and features, most recent first; see the linked
 sections above for mechanism detail. Releases with no engine changes (v0.2.0,
 which shipped USB work only) are omitted.
 
+- **unreleased** (runtime settings): Fn+Enter follows `rgb.cycle`; brightness cap
+  without a USB host (`rgb.val_battery`); rainy_rgb's own idle timer with off/dim
+  (`rgb.idle_s`, `rgb.idle_mode`), which replaces `CONFIG_RAINY_RGB_IDLE_BLANK` (removed)
+  and keeps the indicators visible; CapsLock style and colour (`ind.caps_style`,
+  `ind.caps_color`); Fn-highlight keys from the live keymap, so they follow ZMK Studio
+  (`ind.fn_highlight`); passkey guide switch (`ind.passkey_guide`); low-battery pulse on
+  Esc (`ind.bat_low`). See [config-protocol.md](config-protocol.md).
 - **unreleased**: BLE slot status on F1..F4 and passkey guidance on the number
   row (`ble_status`), fed by ZMK patch 0006; verify chase after Enter and red
   digit flash on a wrong code (0006/0007), open slot timeout (module event
