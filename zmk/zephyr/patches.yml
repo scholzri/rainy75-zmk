@@ -39,7 +39,7 @@ patches:
       B91 GPIO: WRITE_BIT already applies BIT(), so BIT(BIT(pin)) broke pins >= 3. Real upstream
       bug.
   - path: zephyr/0002-gpio-b91-fix-interrupt-support.patch
-    sha256sum: df488302f43aee11d26ff63ba3a94d7eedf68af0ad2080885be783a5ff3e430d
+    sha256sum: bc48504254069907655fe7ec6cc4fa528fc17e8c69b0c06d6c66cd3000cb7490
     module: zephyr
     author: scholzri
     email: 33288574+scholzri@users.noreply.github.com

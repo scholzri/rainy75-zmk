@@ -1,4 +1,4 @@
-From ac6847e92c3d45cb56fd739ba1e19ee8a7b72f27 Mon Sep 17 00:00:00 2001
+From 84304959be861f5c56417f3b1e99936111fb57da Mon Sep 17 00:00:00 2001
 From: scholzri <33288574+scholzri@users.noreply.github.com>
 Date: Sun, 1 Mar 2026 19:44:37 +0100
 Subject: [PATCH] fix(gpio): fix B91 GPIO interrupt support with multi-level
@@ -38,7 +38,7 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
  1 file changed, 33 insertions(+), 10 deletions(-)
 
 diff --git a/drivers/gpio/gpio_b91.c b/drivers/gpio/gpio_b91.c
-index a791e0577b..7688ecd978 100644
+index a791e0577b..d5b69b3fec 100644
 --- a/drivers/gpio/gpio_b91.c
 +++ b/drivers/gpio/gpio_b91.c
 @@ -10,7 +10,6 @@
@@ -109,9 +109,9 @@ index a791e0577b..7688ecd978 100644
 +					 p * DT_REG_SIZE(DT_NODELABEL(gpioa)));
 +				pgpio->irq_en = 0;
 +			} else if (cfg->irq_num == IRQ_GPIO2_RISC0) {
-+				*((volatile uint8_t *)REG_ADDR8(0x140338 + p)) = 0;
++				reg_irq_risc0_en(p) = 0;
 +			} else if (cfg->irq_num == IRQ_GPIO2_RISC1) {
-+				*((volatile uint8_t *)REG_ADDR8(0x140340 + p)) = 0;
++				reg_irq_risc1_en(p) = 0;
 +			}
 +		}
 +		gpio_b91_irq_status_clr(cfg->irq_num);
