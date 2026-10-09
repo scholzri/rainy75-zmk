@@ -1,5 +1,6 @@
 """Unit tests for rainy75_cfg.py (no hardware needed)."""
 import argparse
+import asyncio
 import contextlib
 import io
 import unittest
@@ -172,6 +173,60 @@ class Run(unittest.TestCase):
         self.assertEqual(len(lines), 3)
         self.assertIn("unknown", lines[1])
         self.assertIn("16..255", lines[2])
+
+
+class FakeBleakError(Exception):
+    """Stands in for bleak.exc.BleakError (bleak need not be installed)."""
+
+
+class FakeKb:
+    def __init__(self, exc=None):
+        self.exc = exc
+
+    async def _request(self, op, cmd, pairs, group):
+        raise self.exc
+
+    async def disconnect(self):
+        raise self.exc
+
+
+class BleErrors(unittest.TestCase):
+    def link(self, exc):
+        link = object.__new__(c.BleLink)
+        link.loop = asyncio.new_event_loop()
+        link._bleak_error = FakeBleakError
+        link.kb = FakeKb(exc)
+        self.addCleanup(link.loop.close)
+        return link
+
+    def test_bleak_error_becomes_one_line_runtime_error(self):
+        with self.assertRaises(RuntimeError) as cm:
+            self.link(FakeBleakError("Not connected")).request(c.READ, c.CMD_INFO, [])
+        self.assertEqual(str(cm.exception), "Not connected")
+        with self.assertRaises(RuntimeError) as cm:
+            self.link(FakeBleakError()).request(c.READ, c.CMD_INFO, [])
+        self.assertEqual(str(cm.exception), "Bluetooth error")
+
+    def test_bleak_error_ending_in_equals_digit_is_not_a_device_rc(self):
+        with self.assertRaises(RuntimeError) as cm:
+            self.link(FakeBleakError("handle=5")).request(c.READ, c.CMD_INFO, [])
+        self.assertNotIsInstance(cm.exception, c.DeviceError)
+
+    def test_device_rc_still_a_device_error(self):
+        with self.assertRaises(c.DeviceError) as cm:
+            self.link(RuntimeError("device rc=8")).request(c.READ, c.CMD_INFO, [])
+        self.assertEqual(cm.exception.rc, 8)
+
+    def test_empty_timeout_gets_a_message(self):
+        with self.assertRaises(TimeoutError) as cm:
+            self.link(asyncio.TimeoutError()).request(c.READ, c.CMD_INFO, [])
+        self.assertIn("no response", str(cm.exception))
+
+    def test_close_converts_and_still_closes_the_loop(self):
+        link = self.link(FakeBleakError("gone"))
+        with self.assertRaises(RuntimeError):
+            link.close()
+        self.assertTrue(link.loop.is_closed())
 
 
 if __name__ == "__main__":

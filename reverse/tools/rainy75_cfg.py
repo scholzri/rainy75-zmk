@@ -167,24 +167,38 @@ class SerialLink:
 class BleLink:
     def __init__(self, address=None):
         import rainy75_rgb_ble
+        from bleak.exc import BleakError  # there: rainy75_rgb_ble exits without bleak
+        self._bleak_error = BleakError
         self.loop = asyncio.new_event_loop()
         self.kb = rainy75_rgb_ble.Rainy75BLE(address=address)
-        self.loop.run_until_complete(self.kb.connect())
+        self._run(self.kb.connect())
+
+    def _run(self, coro):
+        """Run on the link's loop; bleak's own errors become a one-line RuntimeError."""
+        try:
+            return self.loop.run_until_complete(coro)
+        except self._bleak_error as e:
+            raise RuntimeError(str(e) or "Bluetooth error") from None
 
     def request(self, op, cmd, fields):
         pairs = [(k, cbor(v)) for k, v in fields]
         try:
-            return self.loop.run_until_complete(
-                self.kb._request(op, cmd, pairs, group=GROUP))
+            return self._run(self.kb._request(op, cmd, pairs, group=GROUP))
         except RuntimeError as e:  # "device rc=N" from rainy75_rgb_ble
             rc = str(e).rpartition("=")[2]
-            if rc.isdigit():
+            if str(e).startswith("device rc=") and rc.isdigit():
                 raise DeviceError(int(rc)) from None
             raise
+        except TimeoutError as e:  # asyncio.wait_for: empty message
+            if str(e):
+                raise
+            raise TimeoutError("no response from the keyboard over Bluetooth") from None
 
     def close(self):
-        self.loop.run_until_complete(self.kb.disconnect())
-        self.loop.close()
+        try:
+            self._run(self.kb.disconnect())
+        finally:
+            self.loop.close()
 
 
 def run(link, a):
