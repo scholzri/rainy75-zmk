@@ -1684,6 +1684,255 @@
     t.eq(dev.serviceUuid, undefined, "no service lookup after giving up");
   });
 
+  // ---- Task 11: UI (browser only, on index.html?demo in a frame) ----
+
+  /* index.html?demo[=variant] in a frame of test.html, after it connected:
+   * {w, d, sim, row(key), close()}. */
+  async function openDemo(env, variant) {
+    const f = document.createElement("iframe");
+    f.src = "index.html?demo" + (variant ? "=" + variant : "");
+    env.frames.append(f);
+    await new Promise((resolve) => f.addEventListener("load", resolve, { once: true }));
+    const w = f.contentWindow;
+    await w.RainyDemo.ready;
+    const d = w.document;
+    return {
+      w, d, sim: w.RainyDemo.sim,
+      row: (key) => d.querySelector(`.row[data-key="${key}"]`),
+      close: () => f.remove(),
+    };
+  }
+  const fire = (el, type) => el.dispatchEvent(new (el.ownerDocument ? el.ownerDocument.defaultView : el).Event(type, { bubbles: true }));
+  async function until(cond, ms = 2000) {
+    for (let i = 0; i < ms / 20; i++) {
+      if (cond()) return;
+      await sleep(20);
+    }
+    throw new Error("timed out waiting");
+  }
+
+  uiTest("ui: the demo shows every setting in its section", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      t.eq(p.d.getElementById("state").textContent, "Demo: a simulated keyboard");
+      t.eq(p.d.getElementById("fw").textContent, "Firmware 0.4.0");
+      t.eq(p.d.querySelectorAll("#rows-rgb .row").length, 11);
+      t.eq(p.d.querySelectorAll("#rows-ind .row").length, 5);
+      t.eq(p.d.querySelectorAll("#rows-kb .row").length, 5);
+      t.ok(p.d.getElementById("hidden-note").hidden);
+      t.ok(p.d.getElementById("intro").hidden && !p.d.getElementById("settings").hidden);
+      t.ok(p.d.getElementById("btn-usb").hidden && p.d.getElementById("btn-disconnect").hidden);
+      for (const el of p.d.querySelectorAll(".row > .control > [id]")) {
+        t.ok(p.d.querySelector(`label[for="${el.id}"]`), "a label for " + el.id);
+        t.ok(p.d.getElementById(el.getAttribute("aria-describedby")), "help for " + el.id);
+      }
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: a switch and a choice reach the keyboard", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const on = p.d.getElementById("set-rgb-on");
+      t.eq([on.checked, on.getAttribute("role")], [true, "switch"]);
+      on.click();
+      await until(() => p.sim.values["rgb.on"] === false);
+      const fx = p.d.getElementById("set-rgb-effect");
+      t.eq(fx.value, "solid");
+      t.eq(fx.options.length, 12);
+      fx.value = "plasma";
+      fire(fx, "change");
+      await until(() => p.sim.values["rgb.effect"] === "plasma");
+      t.ok(/^Plasma: Flowing/.test(p.row("rgb.effect").querySelector("p.help:last-child").textContent));
+      t.eq(p.d.getElementById("set-kb-os").value, "win");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: changes on the keyboard show up (rev)", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      p.sim.pressFnEnter();
+      await until(() => p.d.getElementById("set-rgb-effect").value === "rainbow", 3000);
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: kb.os_keys 0 warns, re-read on focus without a rev change", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const warn = p.row("kb.os_keys").querySelector(".warn");
+      t.eq(p.d.getElementById("set-kb-os-keys").textContent, "2");
+      t.ok(warn.hidden);
+      p.sim.setOsKeys(0);
+      fire(p.w, "focus");
+      await until(() => !warn.hidden);
+      t.eq(p.d.getElementById("set-kb-os-keys").textContent, "0");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: a refused change shows the error and the keyboard's value", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const sw = p.d.getElementById("set-ind-fn-highlight");
+      p.sim.failNextSet = 3;
+      sw.click();
+      await until(() => !p.d.getElementById("msg").hidden);
+      t.eq(p.d.getElementById("msg").textContent, "The keyboard refused: invalid value (rc 3).");
+      await until(() => sw.checked === true);
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: settings and names of a newer firmware are hidden", async (C, env) => {
+    const p = await openDemo(env, "future");
+    try {
+      t.eq(p.d.getElementById("hidden-note").textContent, "1 setting needs a newer page.");
+      t.ok(!p.d.getElementById("hidden-note").hidden);
+      t.eq(p.row("rgb.future"), null);
+      const fx = p.d.getElementById("set-rgb-effect");
+      t.eq(fx.options.length, 12, "fireworks is not offered");
+      p.sim.values["rgb.effect"] = "fireworks";
+      p.sim.rev++;
+      await until(() => fx.value === "", 3000);
+      t.eq(fx.selectedOptions[0].textContent, "Other (needs a newer page)");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: an old firmware and an unconfirmed image", async (C, env) => {
+    const old = await openDemo(env, "old");
+    try {
+      t.ok(/no runtime settings/.test(old.d.getElementById("msg").textContent));
+      t.eq(old.d.getElementById("state").textContent, "Not connected");
+      t.ok(old.d.getElementById("settings").hidden);
+    } finally {
+      old.close();
+    }
+    const test = await openDemo(env, "test");
+    try {
+      t.eq(test.d.getElementById("fw").textContent, "Firmware 0.4.0, test image (not confirmed)");
+    } finally {
+      test.close();
+    }
+  });
+
+  uiTest("ui: a lost connection brings back the connect buttons", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      p.w.RainyDemo.transport.lose();
+      t.eq(p.d.getElementById("state").textContent, "Connection lost");
+      t.ok(!p.d.getElementById("btn-usb").hidden && !p.d.getElementById("btn-ble").hidden);
+      t.ok(p.d.getElementById("settings").hidden);
+      t.eq(p.d.getElementById("msg").textContent, "Connection lost. Connect again.");
+    } finally {
+      p.close();
+    }
+  });
+
+  /* Contracts from the reviews of the earlier tasks (see the Task 11 report). */
+
+  uiTest("ui: send() tells the caller whether the value went out", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const send = p.w.RainyDemo.send;
+      const msg = () => p.d.getElementById("msg");
+      t.eq(await send("rgb.hue", 40), true);
+      t.eq(p.sim.values["rgb.hue"], 40);
+      p.sim.failNextSet = 3;
+      t.eq(await send("rgb.hue", 50), false, "refused by the keyboard");
+      t.eq(msg().textContent, "The keyboard refused: invalid value (rc 3).");
+      t.eq(p.sim.values["rgb.hue"], 40);
+      t.eq(await send("rgb.hue", 999), false, "refused by the page's own check");
+      t.ok(/outside 0\.\.255/.test(msg().textContent), msg().textContent);
+      t.eq(await send("rgb.hue", 60), true);
+      t.ok(msg().hidden, "a success clears the error");
+      p.w.RainyDemo.transport.send = async () => {
+        throw new Error("write failed");
+      };
+      t.eq(await send("rgb.hue", 70), false, "transport failure");
+      t.eq(p.d.getElementById("state").textContent, "Connection lost");
+      t.eq(await send("rgb.hue", 80), false, "no connection: nothing is sent");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: a transport that stops answering is dropped, closed and not used again", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const tr = p.w.RainyDemo.transport;
+      tr.drop = 1000000; /* every request is swallowed: the poll times out after its retry */
+      await until(() => p.d.getElementById("state").textContent === "Connection lost", 7000);
+      t.ok(tr.closed, "the transport is closed");
+      t.ok(p.d.getElementById("settings").hidden);
+      t.ok(!p.d.getElementById("btn-usb").hidden && !p.d.getElementById("btn-ble").hidden);
+      t.eq(p.d.getElementById("msg").textContent, "Connection lost. Connect again.");
+      const n = p.sim.requests.length;
+      await sleep(1500);
+      t.eq(p.sim.requests.length, n, "no request after the drop");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: kb.os_keys is re-read when the page becomes visible, not while it is hidden", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const warn = p.row("kb.os_keys").querySelector(".warn");
+      const visible = (on) => Object.defineProperty(p.d, "hidden", { configurable: true, get: () => !on });
+      p.sim.setOsKeys(0);
+      visible(false);
+      p.d.dispatchEvent(new p.w.Event("visibilitychange"));
+      fire(p.w, "focus");
+      await sleep(300);
+      t.ok(warn.hidden, "a hidden page does not read");
+      visible(true);
+      p.d.dispatchEvent(new p.w.Event("visibilitychange"));
+      await until(() => !warn.hidden);
+      t.eq(p.d.getElementById("set-kb-os-keys").textContent, "0");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: numbers carry their units", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const text = (key) => p.row(key).querySelector("output").textContent;
+      t.eq([text("kb.sleep_min"), text("ind.bat_low"), text("rgb.idle_s"), text("rgb.val_battery")],
+        ["15 min", "Off", "Never", "255, no cap"]);
+      p.sim.values["kb.sleep_min"] = 90;
+      p.sim.values["ind.bat_low"] = 20;
+      p.sim.values["rgb.idle_s"] = 90;
+      p.sim.values["rgb.val_battery"] = 100;
+      p.sim.rev++;
+      await until(() => text("kb.sleep_min") === "90 min", 3000);
+      t.eq([text("ind.bat_low"), text("rgb.idle_s"), text("rgb.val_battery")], ["20 %", "1 min 30 s", "100"]);
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: the hidden attribute hides an element whatever its class", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const conn = p.d.getElementById("conn");
+      t.eq(p.w.getComputedStyle(conn).display, "flex");
+      conn.hidden = true;
+      t.eq(p.w.getComputedStyle(conn).display, "none");
+    } finally {
+      p.close();
+    }
+  });
+
   // end of tests
 
   async function runOne(fn, C, env) {

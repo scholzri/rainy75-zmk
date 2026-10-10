@@ -42,11 +42,111 @@ body {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
+html { scroll-padding-top: 6rem; }
+a { color: var(--accent); }
+.skip { position: absolute; left: -100vw; }
+.skip:focus { left: 1rem; top: .5rem; z-index: 2; background: var(--card); padding: .3rem .6rem; }
+header.bar {
+  position: sticky; top: 0; z-index: 1; display: flex; flex-wrap: wrap; align-items: center;
+  gap: .5rem 1rem; padding: .7rem 1rem; background: var(--card); border-bottom: 1px solid var(--line);
+}
+header h1 { margin: 0 auto 0 0; font-size: 1.15rem; }
+.conn { display: flex; gap: .5rem; flex-wrap: wrap; }
+.status { flex-basis: 100%; margin: 0; color: var(--muted); font-size: .9rem; }
+#fw:not(:empty)::before { content: "\00B7\00A0"; }
+button {
+  font: inherit; padding: .4rem .9rem; border-radius: .4rem; cursor: pointer;
+  color: var(--fg); background: var(--card); border: 1px solid var(--line);
+}
+button.primary { color: var(--accent-fg); background: var(--accent); border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+main { max-width: 52rem; margin: 0 auto; padding: 1rem; }
+main:focus { outline: none; }
+.msg { max-width: 50rem; margin: 1rem auto 0; padding: .6rem .9rem; border-radius: .4rem; }
+.msg.error { color: var(--err-fg); background: var(--err-bg); }
+.msg.info { color: var(--info-fg); background: var(--info-bg); }
+.card {
+  margin-bottom: 1rem; padding: .2rem 1rem 1rem; background: var(--card);
+  border: 1px solid var(--line); border-radius: .6rem;
+}
+h2 { margin: .8rem 0 .3rem; font-size: 1.05rem; }
+.row {
+  display: grid; grid-template-columns: minmax(10rem, 1fr) minmax(12rem, 1.4fr); gap: .3rem 1rem;
+  align-items: center; padding: .7rem 0; border-top: 1px solid var(--line);
+}
+.row:first-child { border-top: 0; }
+.row > p, .row > ol { grid-column: 1 / -1; margin: 0; }
+.help { color: var(--muted); font-size: .88rem; }
+.warn { padding: .4rem .6rem; color: var(--warn-fg); background: var(--warn-bg); border-radius: .3rem; }
+.control { display: flex; align-items: center; gap: .6rem; min-width: 0; }
+select { font: inherit; padding: .3rem; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: .3rem; }
+output { font-variant-numeric: tabular-nums; }
+input[role="switch"] {
+  appearance: none; position: relative; width: 2.75rem; height: 1.5rem; margin: 0; cursor: pointer;
+  background: var(--line); border-radius: 1rem; transition: background .15s;
+}
+input[role="switch"]::before {
+  content: ""; position: absolute; top: .15rem; left: .15rem; width: 1.2rem; height: 1.2rem;
+  background: #fff; border-radius: 50%; transition: transform .15s;
+}
+input[role="switch"]:checked { background: var(--accent); }
+input[role="switch"]:checked::before { transform: translateX(1.25rem); }
+@media (forced-colors: active) { input[role="switch"] { appearance: auto; } }
+@media (max-width: 40rem) { .row { grid-template-columns: 1fr; } }
+/* the hidden attribute also hides what a class makes a flex box (.conn) */
+[hidden] { display: none !important; }
 /* end of styles */
 </style>
 </head>
 <body>
 <noscript><p>This page needs JavaScript.</p></noscript>
+<a class="skip" href="#main">Skip to the settings</a>
+<header class="bar">
+  <h1>Rainy 75 settings</h1>
+  <div id="conn" class="conn" role="group" aria-label="Connection">
+    <button id="btn-usb" type="button" class="primary">Connect USB</button>
+    <button id="btn-ble" type="button">Connect Bluetooth</button>
+    <button id="btn-disconnect" type="button" hidden>Disconnect</button>
+  </div>
+  <p class="status"><span id="state" role="status">Starting</span> <span id="fw"></span></p>
+</header>
+<p id="msg" class="msg" role="alert" hidden></p>
+<main id="main" tabindex="-1">
+  <section id="unsupported" class="card" hidden>
+    <h2>This browser cannot connect to the keyboard</h2>
+    <p>The page talks to the keyboard through Web Serial (USB) and Web Bluetooth. Chrome and Edge
+    on Windows, macOS, Linux and ChromeOS have them; Firefox and Safari do not.</p>
+    <p>Without a keyboard: <a href="?demo">try the demo</a>.</p>
+  </section>
+  <section id="intro" class="card">
+    <h2>Connect the keyboard</h2>
+    <p><strong>USB:</strong> plug in the cable and click Connect USB. Chrome lists the keyboard
+    twice (two serial ports, on Linux with the udev rules "Rainy 75 Pro Console" and "Rainy 75 Pro
+    Studio"): choose the console port, or either, the page finds the right one.</p>
+    <p><strong>Bluetooth:</strong> the keyboard must be paired with this computer. Click Connect
+    Bluetooth and choose "Rainy 75 Pro".</p>
+    <p id="note-ble" class="warn" hidden>Bluetooth is not available in this browser. In Chrome on
+    Linux, turn on chrome://flags/#enable-web-bluetooth and restart Chrome.</p>
+    <p id="note-usb" class="warn" hidden>USB needs Chrome or Edge on a desktop computer.</p>
+    <p>Changes apply at once and are stored on the keyboard.
+    <a href="https://github.com/scholzri/rainy75-zmk/blob/main/docs/config.md">Settings guide</a>.
+    Without a keyboard: <a href="?demo">demo</a>.</p>
+  </section>
+  <div id="settings" hidden>
+    <section id="sec-rgb" class="card" aria-labelledby="h-rgb"><h2 id="h-rgb">Lighting</h2><div id="rows-rgb"></div></section>
+    <section id="sec-ind" class="card" aria-labelledby="h-ind"><h2 id="h-ind">Indicators</h2><div id="rows-ind"></div></section>
+    <section id="sec-kb" class="card" aria-labelledby="h-kb"><h2 id="h-kb">Keyboard</h2><div id="rows-kb"></div></section>
+    <p id="hidden-note" class="help" hidden></p>
+  </div>
+  <section id="demo" class="card" aria-labelledby="h-demo" hidden>
+    <h2 id="h-demo">Simulated keyboard</h2>
+    <p>The demo answers like a keyboard with the current firmware; nothing is sent anywhere.</p>
+    <p class="conn"><button id="demo-fn-enter" type="button">Press Fn+Enter</button>
+    <button id="demo-os-keys" type="button">Rebind the Win and Alt keys in ZMK Studio</button></p>
+    <p class="help">The page notices a ZMK Studio change within a few seconds, or at once when the
+    window gets the focus.</p>
+  </section>
+</main>
 <!-- end of page markup -->
 
 <!-- Section: SMP + CBOR -->
@@ -1718,6 +1818,404 @@ body {
     SECTIONS, SETTINGS, EFFECTS, OS_KEYS_WARNING, settingInfo, sectionOf, isKnown, nameLabel, nameHelp,
     visibleNames, displayValue, hiddenNote,
   });
+})();
+</script>
+<!-- Section: UI -->
+<script id="ui">
+"use strict";
+(() => {
+  const C = globalThis.RainyCore;
+  const $ = (id) => document.getElementById(id);
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const query = new URLSearchParams(location.search);
+  const demo = query.has("demo");
+  const hasSerial = "serial" in navigator;
+  const hasBle = "bluetooth" in navigator;
+  const POLL_MS = 1000;
+  const STATE = {
+    usb: "Connected over USB",
+    ble: "Connected over Bluetooth",
+    demo: "Demo: a simulated keyboard",
+  };
+
+  let conn = null; /* {kind, transport, client, model, rows, throttleMs} */
+  let busy = false; /* connecting */
+  let blePicker = false; /* the remembered keyboard did not answer: use the picker */
+
+  /* h("p", {class: "help", onclick: fn}, "text", child) -> element */
+  function h(tag, attrs, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v === false || v === null || v === undefined) continue;
+      if (k === "class") el.className = v;
+      else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+      else el.setAttribute(k, v === true ? "" : String(v));
+    }
+    for (const kid of kids) if (kid !== null && kid !== undefined) el.append(kid);
+    return el;
+  }
+
+  function setState(text) {
+    $("state").textContent = text;
+  }
+
+  function say(text, kind = "error") {
+    const m = $("msg");
+    m.textContent = text || "";
+    m.className = "msg " + kind;
+    m.hidden = !text;
+  }
+
+  function buttons() {
+    const on = conn !== null;
+    $("btn-usb").hidden = on;
+    $("btn-ble").hidden = on;
+    $("btn-disconnect").hidden = !on || conn.kind === "demo";
+    $("btn-usb").disabled = busy || !hasSerial;
+    $("btn-ble").disabled = busy || !hasBle;
+  }
+
+  function showSettings(on) {
+    $("settings").hidden = !on;
+    $("intro").hidden = on;
+  }
+
+  function firmwareText(fw) {
+    if (!fw) return "";
+    return "Firmware " + fw.version + (fw.confirmed ? "" : ", test image (not confirmed)");
+  }
+
+  /* ---- connection ---- */
+
+  async function attach(kind, transport, client) {
+    const model = new C.ConfigModel(client, C.isKnown);
+    const me = { kind, transport, client, model, rows: new Map(), throttleMs: kind === "ble" ? 150 : 50 };
+    conn = me;
+    buttons();
+    client.onClose = () => lost(me);
+    model.on((ev) => modelEvent(me, ev));
+    setState(STATE[kind] + ", reading the settings");
+    try {
+      await model.load();
+    } catch (e) {
+      if (conn !== me) return;
+      if (e instanceof C.TransportError) return lost(me);
+      say(C.errorText(e));
+      return drop(me, "Not connected");
+    }
+    if (conn !== me) return;
+    setState(STATE[kind]);
+    $("fw").textContent = firmwareText(model.firmware);
+    pollLoop(me);
+  }
+
+  function drop(me, state) {
+    if (conn !== me) return;
+    conn = null;
+    me.client.close();
+    me.transport.close();
+    showSettings(false);
+    $("fw").textContent = "";
+    setState(state);
+    buttons();
+  }
+
+  function lost(me) {
+    if (conn !== me) return;
+    drop(me, "Connection lost");
+    say("Connection lost. Connect again.");
+  }
+
+  async function pollLoop(me) {
+    while (conn === me) {
+      await sleep(POLL_MS);
+      if (conn !== me || document.hidden) continue;
+      try {
+        await me.model.poll();
+      } catch (e) {
+        if (e instanceof C.TransportError) return lost(me);
+        say(C.errorText(e));
+      }
+    }
+  }
+
+  /* kb.os_keys changes with ZMK Studio edits, which do not change rev. */
+  function recheck() {
+    const me = conn;
+    if (!me || document.hidden || !me.model.info) return;
+    me.model.refresh(["kb.os_keys"]).catch((e) => {
+      if (e instanceof C.TransportError) lost(me);
+    });
+  }
+
+  async function connectUsb() {
+    if (busy || conn) return;
+    busy = true;
+    buttons();
+    say("");
+    let found = null;
+    try {
+      for (let round = 0; round < 3 && !found; round++) {
+        let port;
+        try {
+          port = await C.pickPort(navigator.serial);
+        } catch (e) {
+          if (e.name === "NotFoundError") break; /* the picker was closed */
+          if (e.name === "SecurityError") {
+            say("Click Connect USB again and choose the other Rainy 75 port.", "info");
+            break;
+          }
+          throw e;
+        }
+        setState("Checking the port");
+        const r = await C.probeSerial(port);
+        if (r.ok) found = r;
+        else if (r.reason === "open") {
+          say(C.portBusyText(r.error));
+          break;
+        } else say("This is the ZMK Studio port. Choose the other Rainy 75 port (the console).", "info");
+      }
+    } catch (e) {
+      say(C.errorText(e));
+    }
+    busy = false;
+    if (found) {
+      say("");
+      return attach("usb", found.transport, found.client);
+    }
+    setState("Not connected");
+    buttons();
+  }
+
+  async function connectBle() {
+    if (busy || conn) return;
+    busy = true;
+    buttons();
+    say("");
+    let found = null;
+    try {
+      const known = blePicker ? null : await C.rememberedDevice(navigator.bluetooth).catch(() => null);
+      if (known) {
+        setState("Connecting over Bluetooth");
+        try {
+          found = await C.openBle(known);
+        } catch (e) {
+          if (e instanceof C.NotBondedError) throw e;
+          blePicker = true;
+          say("The keyboard did not answer over Bluetooth. Click Connect Bluetooth again to choose it from the list.", "info");
+        }
+      } else {
+        let device = null;
+        try {
+          device = await C.pickDevice(navigator.bluetooth);
+        } catch (e) {
+          if (e.name !== "NotFoundError") throw e; /* NotFoundError: the picker was closed */
+        }
+        if (device) {
+          setState("Connecting over Bluetooth");
+          found = await C.openBle(device);
+          blePicker = false;
+        }
+      }
+    } catch (e) {
+      say(C.errorText(e));
+    }
+    busy = false;
+    if (found) return attach("ble", found.transport, found.client);
+    setState("Not connected");
+    buttons();
+  }
+
+  /* Page load: a port or keyboard granted on an earlier visit, no picker. */
+  async function autoConnect(useBle) {
+    busy = true;
+    buttons();
+    let found = null;
+    let kind = "usb";
+    if (hasSerial) {
+      setState("Looking for the keyboard");
+      found = await C.findGrantedPort(navigator.serial).catch(() => null);
+    }
+    if (!found && useBle && hasBle) {
+      const device = await C.rememberedDevice(navigator.bluetooth).catch(() => null);
+      if (device) {
+        setState("Connecting over Bluetooth");
+        kind = "ble";
+        found = await C.openBle(device, 10000).catch(() => null);
+      }
+    }
+    busy = false;
+    if (found && !conn) return attach(kind, found.transport, found.client);
+    if (!conn) setState("Not connected");
+    buttons();
+  }
+
+  function startDemo() {
+    const sim = new C.SimKeyboard(C.demoOptions(query.get("demo")));
+    const transport = new C.SimTransport(sim, { latencyMs: 15 });
+    const client = new C.SmpClient(transport, { timeoutMs: 2000, retries: 1 });
+    $("demo").hidden = false;
+    /* send: for the tests, to see what send() returns. */
+    window.RainyDemo = { sim, transport, send: (key, value) => send(conn, key, value),
+      ready: attach("demo", transport, client) };
+  }
+
+  /* ---- settings ---- */
+
+  function modelEvent(me, ev) {
+    if (conn !== me) return;
+    if (ev.type === "loaded") render(me);
+    else if (ev.type === "values") refresh(me, ev.keys);
+  }
+
+  function render(me) {
+    me.rows.clear();
+    for (const s of C.SECTIONS) $("rows-" + s.id).replaceChildren();
+    for (const info of C.SETTINGS) {
+      const entry = me.model.entries.get(info.key);
+      if (!entry || !C.isKnown(entry)) continue;
+      const row = makeRow(me, entry, info);
+      $("rows-" + C.sectionOf(info.key)).append(row.el);
+      me.rows.set(info.key, row);
+      row.update(me.model.values.get(info.key));
+    }
+    for (const s of C.SECTIONS) $("sec-" + s.id).hidden = !$("rows-" + s.id).children.length;
+    const n = me.model.hiddenCount();
+    $("hidden-note").textContent = n ? C.hiddenNote(n) : "";
+    $("hidden-note").hidden = !n;
+    showSettings(true);
+  }
+
+  function refresh(me, keys) {
+    for (const [key, row] of me.rows) {
+      if (keys && !keys.includes(key)) continue;
+      if (!row.busy()) row.update(me.model.values.get(key));
+    }
+  }
+
+  function makeRow(me, entry, info) {
+    const id = "set-" + entry.key.replace(/[^a-z0-9]+/gi, "-");
+    const helpId = id + "-help";
+    const w = widgetFor(me, entry, info, id, helpId);
+    const el = h("div", { class: "row", "data-key": entry.key }, w.label, w.control,
+      h("p", { class: "help", id: helpId }, info.help), w.extra || null);
+    return { el, update: w.update, busy: w.busy || (() => false) };
+  }
+
+  /* -> true when the keyboard stored the value, false after an error (shown,
+   * or the connection dropped): the slider throttle counts a false as not sent. */
+  async function send(me, key, value) {
+    if (conn !== me) return false;
+    try {
+      await me.model.set(key, value);
+      say("");
+      return true;
+    } catch (e) {
+      if (e instanceof C.TransportError) lost(me);
+      else say(C.errorText(e));
+      return false;
+    }
+  }
+
+  /* A widget: {label, control, extra?, update(v), busy?()}. */
+  function widgetFor(me, entry, info, id, helpId) {
+    if (entry.ro) return textWidget(me, entry, info, id, helpId);
+    if (entry.type === "b") return toggleWidget(me, entry, info, id, helpId);
+    if (entry.type === "e") return selectWidget(me, entry, info, id, helpId);
+    return textWidget(me, entry, info, id, helpId);
+  }
+
+  function textWidget(me, entry, info, id, helpId) {
+    const out = h("output", { id, "aria-describedby": helpId });
+    const warn = entry.key === "kb.os_keys" ? h("p", { class: "warn", hidden: true }, C.OS_KEYS_WARNING) : null;
+    return {
+      label: h("label", { for: id }, info.label),
+      control: h("span", { class: "control" }, out),
+      extra: warn,
+      update(v) {
+        out.textContent = C.displayValue(entry, v);
+        if (warn) warn.hidden = v !== 0;
+      },
+    };
+  }
+
+  function toggleWidget(me, entry, info, id, helpId) {
+    const input = h("input", { type: "checkbox", role: "switch", id, "aria-describedby": helpId });
+    input.addEventListener("change", () => send(me, entry.key, input.checked));
+    return {
+      label: h("label", { for: id }, info.label),
+      control: h("span", { class: "control" }, input),
+      update(v) {
+        input.checked = !!v;
+      },
+    };
+  }
+
+  function selectWidget(me, entry, info, id, helpId) {
+    const names = C.visibleNames(entry);
+    const sel = h("select", { id, "aria-describedby": helpId },
+      ...names.map((n) => h("option", { value: n }, C.nameLabel(entry.key, n))));
+    const other = h("option", { value: "", disabled: true }, "Other (needs a newer page)");
+    const about = C.nameHelp(entry.key, names[0]) !== null ? h("p", { class: "help" }) : null;
+    const describe = () => {
+      if (about) about.textContent = sel.value ? C.nameLabel(entry.key, sel.value) + ": " + C.nameHelp(entry.key, sel.value) : "";
+    };
+    sel.addEventListener("change", () => {
+      describe();
+      if (sel.value) send(me, entry.key, sel.value);
+    });
+    return {
+      label: h("label", { for: id }, info.label),
+      control: h("span", { class: "control" }, sel),
+      extra: about,
+      update(v) {
+        if (names.includes(v)) {
+          other.remove();
+          sel.value = v;
+        } else {
+          sel.append(other);
+          sel.value = "";
+        }
+        describe();
+      },
+    };
+  }
+
+  // end of widgets
+
+  function init() {
+    $("btn-usb").addEventListener("click", connectUsb);
+    $("btn-ble").addEventListener("click", connectBle);
+    $("btn-disconnect").addEventListener("click", () => {
+      if (conn) drop(conn, "Not connected");
+    });
+    window.addEventListener("focus", recheck);
+    document.addEventListener("visibilitychange", recheck);
+    $("demo-fn-enter").addEventListener("click", () => window.RainyDemo.sim.pressFnEnter());
+    $("demo-os-keys").addEventListener("click", () => {
+      const sim = window.RainyDemo.sim;
+      sim.setOsKeys(sim.values["kb.os_keys"] ? 0 : 2);
+    });
+    // end of wiring
+    $("note-usb").hidden = hasSerial || !hasBle;
+    $("note-ble").hidden = hasBle || !hasSerial;
+    if (demo) return startDemo();
+    if (!hasSerial && !hasBle) {
+      $("unsupported").hidden = false;
+      $("intro").hidden = true;
+      $("conn").hidden = true;
+      setState("This browser cannot connect to the keyboard");
+      return;
+    }
+    if (hasSerial) {
+      navigator.serial.addEventListener("connect", () => {
+        if (!conn && !busy) autoConnect(false);
+      });
+    }
+    autoConnect(true);
+  }
+
+  init();
 })();
 </script>
 <!-- end of sections -->
