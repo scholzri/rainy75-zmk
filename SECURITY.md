@@ -29,9 +29,10 @@ How to recognize a fake:
   the Wobkey Rainy 75 has **no UF2 / mass-storage bootloader**; that procedure
   is physically impossible on this hardware.
 - It is not hosted under `github.com/scholzri` (the settings page: under
-  `scholzri.github.io/rainy75-zmk/config/`). Check the host name exactly: it must be
-  `github.com/scholzri/` or `scholzri.github.io/` with nothing before or after it, and
-  look-alikes (another user name, extra letters or words, a longer ending) are fakes.
+  `scholzri.github.io/rainy75-zmk/config/`). Check the host name exactly: the address
+  starts with `https://github.com/scholzri/` or `https://scholzri.github.io/`, with no other
+  letters around `scholzri` and nothing between `github.io` and the next `/`; look-alikes
+  (`scholzri-zmk.github.io`, `scholzri.github.io.example.com`, another user name) are fakes.
 
 ### Known instances
 
