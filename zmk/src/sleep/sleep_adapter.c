@@ -20,7 +20,14 @@
  *
  * Threads: the check runs on the system work queue, the listener in the
  * thread that raises the event (key positions: the system work queue as
- * well). last_activity_ms is one aligned word, stored and loaded whole.
+ * well). last_activity_ms is one aligned word, stored and loaded whole; the
+ * USB state below is used by the check only.
+ *
+ * Listener order: ZMK runs listeners in link order, and this one comes last
+ * for key positions (activity.c, keymap, rainy_rgb, this file). If the
+ * keymap listener stops an event (an error, or &trans on every layer), this
+ * listener misses it, while ZMK's activity.c (the first) still sees it. See
+ * docs/zmk-firmware.md, zmk-src patch 0007, on listener order.
  */
 
 #include <zephyr/init.h>
@@ -55,10 +62,10 @@ static volatile uint32_t last_activity_ms; /* k_uptime_get_32() of the last acti
 #if IS_ENABLED(CONFIG_RAINY75_CONFIG)
 static uint32_t last_rev; /* cfg_rev() at the last check */
 #endif
-static int8_t logged_host = -1; /* USB host state last logged, -1 = none yet */
 #if IS_ENABLED(CONFIG_ZMK_USB)
 static bool ble_suspended;           /* bus suspended and output Bluetooth at the last check */
 static uint32_t ble_suspended_since; /* k_uptime_get_32() when that began */
+static uint8_t logged_usb = 0xff;    /* USB inputs and decision last logged, 0xff = none yet */
 #endif
 
 static int sleep_activity_listener(const zmk_event_t *eh) {
@@ -72,21 +79,24 @@ ZMK_SUBSCRIPTION(rainy75_sleep, zmk_position_state_changed);
 ZMK_SUBSCRIPTION(rainy75_sleep, zmk_sensor_event);
 
 /* kb.sleep_min and kb.sleep_on_usb; the defaults in a build without the
- * runtime settings. */
+ * runtime settings, and if the registry refused the settings table
+ * (cfg_table.c logs it): cfg_u() would give 0 then, which means never. */
 static uint32_t sleep_min(void) {
 #if IS_ENABLED(CONFIG_RAINY75_CONFIG)
-    return cfg_u(CFG_KB_SLEEP_MIN);
-#else
-    return SLEEP_POLICY_MIN_DEFAULT;
+    if (cfg_count() == CFG_ID_COUNT) {
+        return cfg_u(CFG_KB_SLEEP_MIN);
+    }
 #endif
+    return SLEEP_POLICY_MIN_DEFAULT;
 }
 
 static bool sleep_on_usb(void) {
 #if IS_ENABLED(CONFIG_RAINY75_CONFIG)
-    return cfg_u(CFG_KB_SLEEP_ON_USB) != 0;
-#else
-    return SLEEP_POLICY_ON_USB_DEFAULT;
+    if (cfg_count() == CFG_ID_COUNT) {
+        return cfg_u(CFG_KB_SLEEP_ON_USB) != 0;
+    }
 #endif
+    return SLEEP_POLICY_ON_USB_DEFAULT;
 }
 
 /* A settings change (host set or reset, Fn keys) counts as activity. True
@@ -110,11 +120,15 @@ static bool note_settings_change(uint32_t now) {
  * zmk_usb_conn_state_changed and endpoint events announce. The time since
  * the bus suspended with the output on Bluetooth starts when both first
  * hold and ends when either stops (now - since wraps correctly modulo 2^32
- * for times below 49 days). */
+ * for times below 49 days). One log line whenever an input or the decision
+ * changes, so a hardware test sees whether the B91 notices a USB suspend. */
 static bool usb_host(uint32_t now) {
 #if IS_ENABLED(CONFIG_ZMK_USB)
+    bool configured = zmk_usb_is_hid_ready();
     bool suspended = zmk_usb_get_status() == USB_DC_SUSPEND;
     bool output_ble = false;
+    bool host;
+    uint8_t state;
 
 #if IS_ENABLED(CONFIG_ZMK_BLE)
     output_ble = zmk_endpoint_get_selected().transport == ZMK_TRANSPORT_BLE;
@@ -125,8 +139,15 @@ static bool usb_host(uint32_t now) {
         ble_suspended = true;
         ble_suspended_since = now;
     }
-    return sleep_policy_usb_host(zmk_usb_is_hid_ready(), suspended, output_ble,
+    host = sleep_policy_usb_host(configured, suspended, output_ble,
                                  ble_suspended ? now - ble_suspended_since : 0);
+    state = (uint8_t)(configured | (suspended << 1) | (output_ble << 2) | (host << 3));
+    if (state != logged_usb) {
+        LOG_INF("sleep: usb configured=%d suspended=%d output=%s host=%s", configured, suspended,
+                output_ble ? "ble" : "usb", host ? "yes" : "no");
+        logged_usb = state;
+    }
+    return host;
 #else
     ARG_UNUSED(now);
     return false;
@@ -149,10 +170,6 @@ static void sleep_check(struct k_work *work) {
     ARG_UNUSED(work);
     if (note_settings_change(now)) {
         last = now;
-    }
-    if (logged_host != (int8_t)host) {
-        LOG_INF("sleep: usb host %s", host ? "yes" : "no");
-        logged_host = (int8_t)host;
     }
     /* now - last wraps correctly (modulo 2^32) for idle times below 49 days */
     if (sleep_policy_should_sleep(now - last, minutes, host, sleep_on_usb())) {
