@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Firmware update for the Rainy 75 over USB (mcumgr SMP image management).
+Firmware update for the Rainy 75 over USB or Bluetooth (mcumgr SMP image management).
 
 About 7x faster than the mcumgr CLI over USB (313 KB in about 12 s instead of
 85 s): the CLI pauses about 20 ms after every 127-byte serial line, a pacing
@@ -18,11 +18,15 @@ Usage:
     rainy75_dfu.py reset
 
 The port is found by USB product name (the console port, interface 0); use
---port to name it. A test image runs once: it stays only if it (or you)
+--port to name it. Without a keyboard on USB the tool goes over Bluetooth
+(needs bleak, and a computer the keyboard is paired with; --ble forces it,
+--address picks the keyboard if there is more than one): about 20 s for an
+image instead of about 12 s. A test image runs once: it stays only if it (or you)
 confirms it, else the next reset goes back to the previous image.
 """
 
 import argparse
+import asyncio
 import hashlib
 import struct
 import sys
@@ -34,9 +38,10 @@ import restore_original as smp
 IMG_MGMT_STATE = 0
 IMG_MGMT_UPLOAD = 1
 OS_MGMT_RESET = 5
-CHUNK = 420          # image bytes per request; ~26 KiB/s, larger gains nothing
-                     # (the firmware's receive path is CPU bound per byte, see
-                     # docs/zmk-firmware.md) and must fit the 512 B SMP buffer
+CHUNK = 420          # image bytes per request with a 512 B SMP buffer (the
+                     # firmware before 0.4.1, which cannot report its size)
+OS_MGMT_PARAMS = 6
+CHUNK_SPARE = 64     # SMP header and CBOR keys of the largest request
 
 
 def image_hash(data):
@@ -85,15 +90,27 @@ class Dfu:
         body = raw[smp.SMP_HDR_SIZE:smp.SMP_HDR_SIZE + length]
         return rainy75_rgb._cbor_decode(body)[0] if body else {}
 
+    def chunk_size(self):
+        """Image bytes per request: from the keyboard's SMP buffer size (os
+        group "mcumgr params", firmware 0.4.1 and later), else CHUNK."""
+        try:
+            r = self.request(smp.SMP_OP_READ_REQ, smp.SMP_GROUP_OS,
+                             OS_MGMT_PARAMS, [], retries=0)
+        except (TimeoutError, RuntimeError):
+            return CHUNK
+        buf = r.get("buf_size", 0)
+        return max(CHUNK, buf - CHUNK_SPARE) if r.get("rc", 0) == 0 else CHUNK
+
     def images(self):
         return self.request(smp.SMP_OP_READ_REQ, smp.SMP_GROUP_IMG,
                             IMG_MGMT_STATE, []).get("images", [])
 
     def upload(self, data, progress=True):
+        chunk = self.chunk_size()
         off, t0 = 0, time.time()
         while off < len(data):
             pairs = [("off", smp.cbor_encode_uint(off)),
-                     ("data", smp.cbor_encode_bstr(data[off:off + CHUNK]))]
+                     ("data", smp.cbor_encode_bstr(data[off:off + chunk]))]
             if off == 0:
                 pairs = [("image", smp.cbor_encode_uint(0)),
                          ("len", smp.cbor_encode_uint(len(data)))] + pairs
@@ -103,7 +120,7 @@ class Dfu:
                              timeout_s=30.0 if off == 0 else 5.0)
             if r.get("rc", 0) != 0:
                 raise RuntimeError(f"upload refused at offset {off}: {r}")
-            off = r.get("off", off + CHUNK)
+            off = r.get("off", off + chunk)
             if progress:
                 pct = 100 * off // len(data)
                 print(f"\r  {pct:3d} %  {off}/{len(data)} B", end="", flush=True)
@@ -130,6 +147,158 @@ class Dfu:
             pass                            # the reset may beat the response
 
 
+class BleDfu(Dfu):
+    """The same requests over Bluetooth (rainy75_rgb_ble's SMP client).
+    BlueZ now and then drops a reply notification: a request that times out
+    is sent again. That is safe for the upload too, because the keyboard
+    answers a repeated chunk with the offset it already has."""
+
+    RETRIES = 5
+    REPLY_S = 5.0    # wait for an upload reply before going on from the confirmed offset
+    WINDOW = 2       # upload requests in flight: 2 and 3 are equally fast (the
+                     # keyboard is the limit then), 4 runs out of its SMP buffers
+
+    def __init__(self, address=None):
+        import rainy75_rgb_ble          # needs bleak, so only for --ble
+        self.loop = asyncio.new_event_loop()
+        self.kb = rainy75_rgb_ble.Rainy75BLE(address=address)
+        # Our own notification handler (set before connect, which subscribes
+        # it): it keeps every reply frame for the pipelined upload and still
+        # hands it to the client's one-request path.
+        self.frames = asyncio.Queue()
+        self._rx = bytearray()
+        self.kb._on_notify = self._on_notify
+        try:
+            self.loop.run_until_complete(self.kb.connect())
+        except BaseException:
+            self.loop.close()
+            raise
+        # The negotiated ATT MTU: BlueZ shows it as the SMP characteristic's
+        # "MTU" property. bleak's own _acquire_mtu() is not used: it picks the
+        # first writable characteristic, sometimes a HID one that BlueZ owns
+        # (NotAuthorized). Without the MTU the client writes 20-byte pieces
+        # and an image takes about 2.3x longer.
+        try:
+            char = self.kb.client.services.get_characteristic(rainy75_rgb_ble.SMP_CHAR_UUID)
+            mtu = int(char.obj[1].get("MTU", 0))
+            if mtu > 23:
+                self.kb.client._backend._mtu_size = mtu
+        except Exception:
+            pass                            # keep the 20-byte pieces
+
+    def close(self):
+        try:
+            self.loop.run_until_complete(self.kb.disconnect())
+        except Exception:
+            pass
+        self.loop.close()
+
+    def request(self, op, group, cmd, pairs, timeout_s=5.0, retries=RETRIES):
+        self.kb.timeout = timeout_s
+        for attempt in range(1 + retries):
+            try:
+                return self.loop.run_until_complete(
+                    self.kb._request(op, cmd, pairs, group=group))
+            except asyncio.TimeoutError:
+                if attempt == retries:
+                    raise TimeoutError("no answer over Bluetooth") from None
+
+    def _on_notify(self, _char, data):
+        self._rx += data
+        while len(self._rx) >= 8:
+            length, = struct.unpack_from(">H", self._rx, 2)
+            if len(self._rx) < 8 + length:
+                return
+            frame = bytes(self._rx[:8 + length])
+            del self._rx[:8 + length]
+            self.frames.put_nowait(frame)
+            self.kb._response = frame
+            self.kb._resp_event.set()
+
+    async def _send(self, op, group, cmd, pairs):
+        """Write one request without waiting; returns its sequence number."""
+        import rainy75_rgb_ble
+        kb = self.kb
+        body = rainy75_rgb._cbor_map(pairs)
+        seq = kb.seq & 0xFF
+        kb.seq += 1
+        frame = struct.pack(">BBHHBB", op, 0, len(body), group, seq, cmd) + body
+        size = max(20, (kb.client.mtu_size or 23) - 3)
+        for i in range(0, len(frame), size):
+            await kb.client.write_gatt_char(rainy75_rgb_ble.SMP_CHAR_UUID,
+                                            frame[i:i + size], response=False)
+        return seq
+
+    def upload(self, data, progress=True):
+        chunk = self.chunk_size()
+        self.loop.run_until_complete(self._upload(data, progress, chunk))
+
+    async def _upload(self, data, progress, chunk=CHUNK):
+        """Pipelined upload: up to WINDOW chunks in flight. Every reply
+        carries the offset the keyboard has reached (also for a chunk at the
+        wrong offset, which it skips), so replies are cumulative: on a gap or
+        a lost reply the upload goes on from the last offset the keyboard
+        confirmed."""
+        while not self.frames.empty():
+            self.frames.get_nowait()
+        size, t0 = len(data), time.time()
+        acked = 0                   # offset the keyboard confirmed
+        nxt = 0                     # next offset to send
+        inflight = {}               # seq -> offset the keyboard reaches with it
+        silent = 0                  # timeouts in a row
+        first = True
+        while acked < size:
+            window = 1 if first else self.WINDOW   # the first one erases slot 1
+            while len(inflight) < window and nxt < size:
+                pairs = [("off", smp.cbor_encode_uint(nxt)),
+                         ("data", smp.cbor_encode_bstr(data[nxt:nxt + chunk]))]
+                if nxt == 0:
+                    pairs = [("image", smp.cbor_encode_uint(0)),
+                             ("len", smp.cbor_encode_uint(size))] + pairs
+                seq = await self._send(smp.SMP_OP_WRITE_REQ, smp.SMP_GROUP_IMG,
+                                       IMG_MGMT_UPLOAD, pairs)
+                inflight[seq] = min(nxt + chunk, size)
+                nxt = inflight[seq]
+            try:
+                frame = await asyncio.wait_for(self.frames.get(),
+                                               30.0 if first else self.REPLY_S)
+            except asyncio.TimeoutError:
+                silent += 1
+                if silent > self.RETRIES:
+                    raise TimeoutError("no answer over Bluetooth") from None
+                inflight.clear()            # resend from the confirmed offset
+                nxt = acked
+                continue
+            silent = 0
+            seq = frame[6]
+            reply, _ = rainy75_rgb._cbor_decode(frame[8:])
+            if reply.get("rc", 0) != 0:
+                raise RuntimeError(f"upload refused at offset {acked}: {reply}")
+            off = reply.get("off", acked)
+            acked = max(acked, off)
+            want = inflight.pop(seq, None)
+            if want is None:
+                continue                    # a reply from before a resend
+            first = False
+            if off != want:                 # the keyboard skipped a chunk
+                inflight.clear()
+                nxt = acked
+            if not inflight:
+                nxt = max(nxt, acked)
+            if progress:
+                print(f"\r  {100 * acked // size:3d} %  {acked}/{size} B", end="", flush=True)
+        dt = time.time() - t0
+        if progress:
+            print(f"\r  100 %  {size} B in {dt:.1f} s ({size / dt / 1024:.1f} KiB/s)")
+
+    def reset(self):
+        try:
+            self.request(smp.SMP_OP_WRITE_REQ, smp.SMP_GROUP_OS, OS_MGMT_RESET,
+                         [], timeout_s=2.0, retries=0)
+        except (TimeoutError, RuntimeError):
+            pass                            # the reset may beat the response
+
+
 def print_images(images):
     for i in images:
         flags = [f for f in ("active", "confirmed", "pending", "permanent")
@@ -145,6 +314,8 @@ def parse_hash(text):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--port", help="serial port (default: found by USB name)")
+    ap.add_argument("--ble", action="store_true", help="over Bluetooth even if the keyboard is on USB")
+    ap.add_argument("--address", help="with --ble: the keyboard's Bluetooth address")
     sub = ap.add_subparsers(dest="cmd", required=True)
     up = sub.add_parser("upload", help="upload a signed image to slot 1")
     up.add_argument("file")
@@ -158,10 +329,19 @@ def main():
     sub.add_parser("reset", help="reset the keyboard")
     a = ap.parse_args()
 
-    port = a.port or rainy75_rgb.find_port()
-    if not port:
-        sys.exit("No Rainy 75 found on USB (use --port).")
-    dfu = Dfu(port)
+    port = None if a.ble else (a.port or rainy75_rgb.find_port())
+    if port:
+        dfu = Dfu(port)
+    else:
+        if not a.ble:
+            print("No Rainy 75 on USB, using Bluetooth.")
+        port = "Bluetooth"
+        try:
+            dfu = BleDfu(a.address)
+        except SystemExit:                  # rainy75_rgb_ble without bleak
+            sys.exit("No Rainy 75 on USB, and Bluetooth needs bleak (pip install bleak).")
+        except Exception as e:
+            sys.exit(f"No Rainy 75 on USB, and no Bluetooth connection: {e}")
     try:
         if a.cmd == "upload":
             data = open(a.file, "rb").read()

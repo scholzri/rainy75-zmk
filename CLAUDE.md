@@ -104,7 +104,7 @@ reverse/
   firmware/                      # firmware_extracted.bin, firmware_ota.bin, HID descriptors, keymap dump
   scripts/                       # ghidra_reexport.py, apply_names.py, common.py, call_graph.py, constant_fingerprint.py, map_gp_data.py, import_registers.py
     obsolete/                    # archived one-time/superseded scripts (20 scripts)
-  tools/                         # rainy75_dfu.py (fast USB firmware update), rainy75_cfg.py (runtime settings), ota_flasher.py, prepare_ota.py, restore_original.py, via_probe.py, via_dump_keymap.py, probe_commands.py, mem_reader.py, wob_probe.py
+  tools/                         # rainy75_dfu.py (fast firmware update, USB or --ble), rainy75_cfg.py (runtime settings), ota_flasher.py, prepare_ota.py, restore_original.py, via_probe.py, via_dump_keymap.py, probe_commands.py, mem_reader.py, wob_probe.py
     sws_flash.sh                 # Stage 0-1+ helper: dump/analyze/roundtrip/flash/restore via BDT+EVK
     bdt/                         # Telink BDT v2.2.1 (Linux x64), EVK firmware v4.7, udev rules, docs
   ghidra/                        # rainy75_andesv5 project + scripts (ApplyAllNames.java, BSim, export)

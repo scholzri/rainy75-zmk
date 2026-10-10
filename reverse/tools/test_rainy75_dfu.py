@@ -1,5 +1,6 @@
 """Unit tests for rainy75_dfu.py (no hardware needed)."""
 import hashlib
+import asyncio
 import struct
 import unittest
 from unittest import mock
@@ -50,6 +51,110 @@ class SeqMatch(unittest.TestCase):
     def test_only_stale_reply_times_out(self):
         with self.assertRaises(TimeoutError):
             self.request([_reply(3)])
+
+
+class FakeBle:
+    """Stands in for rainy75_rgb_ble.Rainy75BLE: a list of outcomes, each
+    a reply map or None for a dropped notification (timeout)."""
+    def __init__(self, outcomes):
+        self.outcomes, self.calls, self.timeout = list(outcomes), [], None
+
+    async def _request(self, op, cmd, pairs, group=None):
+        self.calls.append((op, group, cmd))
+        r = self.outcomes.pop(0)
+        if r is None:
+            raise asyncio.TimeoutError
+        return r
+
+
+class BleRetry(unittest.TestCase):
+    def ble(self, outcomes):
+        d = dfu.BleDfu.__new__(dfu.BleDfu)
+        d.loop = asyncio.new_event_loop()
+        d.kb = FakeBle(outcomes)
+        self.addCleanup(d.loop.close)
+        return d
+
+    def test_dropped_reply_is_sent_again(self):
+        d = self.ble([None, None, {"off": 420}])
+        self.assertEqual(d.request(2, 1, 1, [], timeout_s=5.0), {"off": 420})
+        self.assertEqual(d.kb.calls, [(2, 1, 1)] * 3)
+        self.assertEqual(d.kb.timeout, 5.0)
+
+    def test_gives_up_after_the_retries(self):
+        d = self.ble([None] * (1 + dfu.BleDfu.RETRIES))
+        with self.assertRaises(TimeoutError):
+            d.request(0, 1, 0, [])
+
+    def test_reset_without_answer_is_fine(self):
+        d = self.ble([None])
+        d.reset()
+        self.assertEqual(d.kb.calls, [(2, 0, 5)])
+
+
+class FakeKeyboard:
+    """Image upload on the keyboard side: takes a chunk only at its own
+    offset and always answers with the offset it has; drops the replies
+    whose numbers are in `drop` (BlueZ losing a notification)."""
+    def __init__(self, d, drop=()):
+        self.d, self.off, self.data, self.n, self.drop = d, 0, bytearray(), 0, set(drop)
+
+    async def send(self, op, group, cmd, pairs):
+        fields = dict(pairs)
+        off = dfu.rainy75_rgb._cbor_decode(fields["off"])[0]
+        chunk = dfu.rainy75_rgb._cbor_decode(fields["data"])[0]
+        if off == self.off:
+            self.data += chunk
+            self.off += len(chunk)
+        seq = self.n & 0xFF
+        self.n += 1
+        if seq not in self.drop:
+            body = dfu.rainy75_rgb._cbor_map([("rc", b"\x00"),
+                                              ("off", dfu.smp.cbor_encode_uint(self.off))])
+            self.d.frames.put_nowait(struct.pack(">BBHHBB", 3, 0, len(body), 1, seq, 1) + body)
+        return seq
+
+
+class ChunkSize(unittest.TestCase):
+    def dfu_with(self, reply):
+        d = dfu.Dfu.__new__(dfu.Dfu)
+        def request(*a, **k):
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+        d.request = request
+        return d
+
+    def test_from_the_buffer_size(self):
+        self.assertEqual(self.dfu_with({"buf_size": 1024, "buf_count": 4}).chunk_size(), 960)
+
+    def test_old_firmware_keeps_420(self):
+        self.assertEqual(self.dfu_with({"rc": 8}).chunk_size(), dfu.CHUNK)
+        self.assertEqual(self.dfu_with(RuntimeError("device rc=8")).chunk_size(), dfu.CHUNK)
+        self.assertEqual(self.dfu_with(TimeoutError()).chunk_size(), dfu.CHUNK)
+        self.assertEqual(self.dfu_with({"buf_size": 512}).chunk_size(), 448)
+
+
+class Pipelined(unittest.TestCase):
+    def run_upload(self, size, drop=()):
+        d = dfu.BleDfu.__new__(dfu.BleDfu)
+        d.loop = asyncio.new_event_loop()
+        self.addCleanup(d.loop.close)
+        d.frames = asyncio.Queue()
+        kb = FakeKeyboard(d, drop)
+        d._send = kb.send
+        data = bytes(i & 0xFF for i in range(size))
+        d.REPLY_S = 0.05
+        d.loop.run_until_complete(d._upload(data, False, dfu.CHUNK))
+        return kb, data
+
+    def test_clean_upload(self):
+        kb, data = self.run_upload(5 * dfu.CHUNK + 17)
+        self.assertEqual(bytes(kb.data), data)
+
+    def test_lost_replies_go_on_from_the_confirmed_offset(self):
+        kb, data = self.run_upload(12 * dfu.CHUNK + 5, drop={3, 4, 9})
+        self.assertEqual(bytes(kb.data), data)
 
 
 if __name__ == "__main__":
