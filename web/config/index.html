@@ -59,7 +59,7 @@ button {
   color: var(--fg); background: var(--card); border: 1px solid var(--line);
 }
 button.primary { color: var(--accent-fg); background: var(--accent); border-color: var(--accent); }
-button:disabled { opacity: .5; cursor: not-allowed; }
+button:disabled, button[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
 main { max-width: 52rem; margin: 0 auto; padding: 1rem; }
 main:focus { outline: none; }
 .msg { max-width: 50rem; margin: 1rem auto 0; padding: .6rem .9rem; border-radius: .4rem; }
@@ -2312,10 +2312,11 @@ button.mv { padding: .1rem .5rem; }
     }
 
     function move(from, to) {
-      if (to < 0 || to >= rows.length || from === to) return;
+      if (to < 0 || to >= rows.length || from === to) return false;
       const [r] = rows.splice(from, 1);
       rows.splice(to, 0, r);
       commit();
+      return true;
     }
 
     function draw() {
@@ -2332,17 +2333,17 @@ button.mv { padding: .1rem .5rem; }
           commit();
           draw();
         });
+        /* aria-disabled, not disabled, at the ends: the button keeps the focus, so more key presses do nothing */
         const up = h("button", { type: "button", class: "mv", "data-part": "up", "aria-label": "Move " + label + " up",
-          disabled: i === 0 }, String.fromCharCode(0x2191));
+          "aria-disabled": i === 0 ? "true" : null }, String.fromCharCode(0x2191));
         up.addEventListener("click", () => {
-          move(i, i - 1);
-          draw();
+          if (move(i, i - 1)) draw();
         });
         const down = h("button", { type: "button", class: "mv", "data-part": "down",
-          "aria-label": "Move " + label + " down", disabled: i === rows.length - 1 }, String.fromCharCode(0x2193));
+          "aria-label": "Move " + label + " down", "aria-disabled": i === rows.length - 1 ? "true" : null },
+        String.fromCharCode(0x2193));
         down.addEventListener("click", () => {
-          move(i, i + 1);
-          draw();
+          if (move(i, i + 1)) draw();
         });
         const li = h("li", { draggable: "true", "data-name": r.name },
           h("span", { class: "grip", "aria-hidden": "true" }, String.fromCharCode(0x2261)), cb,
@@ -2370,9 +2371,9 @@ button.mv { padding: .1rem .5rem; }
         });
         return li;
       }));
-      if (focus) {
+      if (focus) { /* the same control; Move up if it is the disabled checkbox of the only ticked row */
         const li = list.querySelector(`li[data-name="${focus[0]}"]`);
-        const el = li && [focus[1], "cb", "up", "down"].map((p) => li.querySelector(`[data-part="${p}"]`))
+        const el = li && [focus[1], "up"].map((p) => li.querySelector(`[data-part="${p}"]`))
           .find((x) => x && !x.disabled);
         if (el) el.focus();
       }

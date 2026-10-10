@@ -2091,8 +2091,12 @@
       const all = p.d.querySelectorAll("#set-rgb-cycle li input, #set-rgb-cycle li button");
       t.eq(all.length, 36, "a checkbox and two buttons per effect");
       t.ok(Array.from(all).every((el) => el.tabIndex === 0 || el.disabled), "all in the tab order");
-      t.ok(li("solid").querySelector('[data-part="up"]').disabled, "no Move up on the first row");
-      t.ok(li("speedcolour").querySelector('[data-part="down"]').disabled, "no Move down on the last row");
+      const first = li("solid").querySelector('[data-part="up"]');
+      const last = li("speedcolour").querySelector('[data-part="down"]');
+      t.eq([first.getAttribute("aria-disabled"), last.getAttribute("aria-disabled")], ["true", "true"],
+        "no move up on the first row, no move down on the last row");
+      t.ok(!first.disabled && !last.disabled, "they stay focusable");
+      t.eq(li("rainbow").querySelectorAll("[aria-disabled]").length, 0, "the buttons of the other rows are enabled");
       const down = li("solid").querySelector('[data-part="down"]');
       t.eq(down.getAttribute("aria-label"), "Move Solid down");
       down.focus();
@@ -2190,11 +2194,12 @@
       const where = () => [p.d.activeElement.closest("li").dataset.name, p.d.activeElement.dataset.part];
       part("down").focus();
       for (let i = 0; i < 11; i++) part("down").click();
-      t.ok(part("down").disabled && part("cb").disabled, "last row, only ticked: two disabled");
-      t.eq(where(), ["wave", "up"], "the other move button");
+      t.ok(part("down").getAttribute("aria-disabled") === "true" && part("cb").disabled, "last row, only ticked");
+      t.eq(where(), ["wave", "down"], "focus stays on the pressed button");
+      part("up").focus();
       for (let i = 0; i < 11; i++) part("up").click();
-      t.ok(part("up").disabled && part("cb").disabled, "first row, only ticked: two disabled");
-      t.eq(where(), ["wave", "down"], "the other move button");
+      t.ok(part("up").getAttribute("aria-disabled") === "true" && part("cb").disabled, "first row, only ticked");
+      t.eq(where(), ["wave", "up"], "focus stays on the pressed button");
     } finally {
       p.close();
     }
@@ -2231,6 +2236,29 @@
       await until(() => settled("rain", 0), 3000);
       await sleep(300);
       t.ok(settled("rain", 0), "12 presses from the bottom end at the top");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: Space repeated past the end changes nothing", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const names = () => Array.from(p.d.querySelectorAll("#set-rgb-cycle li"), (li) => li.dataset.name);
+      /* Space clicks a button and toggles a checkbox: click() on whatever has focus. */
+      const space = () => p.d.activeElement.click();
+      t.eq(names().indexOf("comet"), 4);
+      p.d.querySelector('#set-rgb-cycle li[data-name="comet"] [data-part="up"]').focus();
+      for (let i = 0; i < 6; i++) {
+        space();
+        await sleep(100); /* separate key presses: the keyboard's answer arrives in between */
+      }
+      await until(() => names()[0] === "comet" && p.sim.values["rgb.cycle"][0] === "comet", 3000);
+      await sleep(300);
+      t.eq(names()[0], "comet");
+      t.eq(p.sim.values["rgb.cycle"], names(), "the keyboard has the order of the page, all 12 effects");
+      t.ok(p.d.getElementById("set-rgb-cycle-comet").checked, "comet is still ticked");
+      t.eq(p.d.activeElement.dataset.part, "up", "focus stays on Move up");
     } finally {
       p.close();
     }
