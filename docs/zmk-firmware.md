@@ -12,7 +12,7 @@ Custom ZMK firmware for the Wobkey Rainy 75 Pro ISO DE keyboard, targeting the T
 | USB DC driver | **Done** | Legacy `usb_dc.h` API; polled suspend + ISR resume, dead-bus reconnect recovery (`CONFIG_ZMK_USB_SUSPEND_REATTACH`) |
 | RGB LED strip | **Done** | WS2812 via PSPI + DMA ch4, PB7 MOSI, 83 per-key LEDs, ZMK underglow enabled |
 | Battery ADC sensor | **Done** | SAR ADC driver, PD1 channel 0x0A, 1/2 divider, BLE battery service |
-| Deep sleep | **Done** | `sys_poweroff` → DEEPSLEEP_MODE (cold boot), 15min idle timeout |
+| Deep sleep | **Done** | `sys_poweroff` → DEEPSLEEP_MODE (cold boot); our trigger (`CONFIG_RAINY75_SLEEP`): `kb.sleep_min` (default 15 min), not on USB unless `kb.sleep_on_usb` |
 | ZMK Studio | **Done** | Runtime keymap editing over BLE GATT (WebBluetooth) |
 | MCUboot DFU | **Done** | mcumgr USB UART (primary) + BLE SMP (backup), swap-using-move, WDT crash revert |
 | Watchdog | **Done** | B91 HW WDT driver, MCUboot image confirmation |
@@ -597,7 +597,7 @@ Bottom 64KB of ILM SRAM retained — BLE controller state survives sleep.
 - `zmk/boards/rainy75/Kconfig.rainy75`: the board selects `HAS_POWEROFF` (no Zephyr patch needed)
 
 **How it works**:
-1. ZMK activity.c detects 15min idle → calls `sys_poweroff()`
+1. The sleep trigger (ZMK's activity.c at bring-up, since v0.4.0 `zmk/src/sleep/`, see [Deep Sleep](#deep-sleep)) calls `sys_poweroff()` after the idle time
 2. `z_sys_poweroff()` shuts down peripherals, enters deep sleep with GPIO pad wakeup
 3. Any keypress pulls a row LOW → MCU cold-boots through MCUboot (~1-2s)
 
@@ -605,10 +605,10 @@ Bottom 64KB of ILM SRAM retained — BLE controller state survives sleep.
 The boot ROM reloads MCUboot into ILM on any reset, overwriting retained app code.
 Using `DEEPSLEEP_MODE` (0x30, cold boot) instead.
 
-**Config** (`conf/app.conf`):
+**Config** (`conf/app.conf` since v0.4.0; at bring-up ZMK's `CONFIG_ZMK_SLEEP=y`):
 ```
-CONFIG_ZMK_SLEEP=y
-CONFIG_ZMK_IDLE_SLEEP_TIMEOUT=900000  # 15 minutes
+CONFIG_ZMK_SLEEP=n
+CONFIG_RAINY75_SLEEP=y
 ```
 `CONFIG_POWEROFF=y` is available because the board selects `HAS_POWEROFF`.
 
@@ -824,7 +824,7 @@ CONFIG_FLASH=y / CONFIG_FLASH_MAP=y / CONFIG_FLASH_PAGE_LAYOUT=y
 - **DFU**: mcumgr USB UART (primary) + BLE SMP (backup), swap-using-move
 - **RGB**: `ZMK_RGB_UNDERGLOW`, PSPI+DMA, PC2 power MOSFET
 - **Battery**: `BATTERY_B91_ADC`, PD1 channel 0x0A, BLE battery service
-- **Sleep**: `ZMK_SLEEP`, 15min idle → `sys_poweroff` (DEEPSLEEP_MODE, cold boot)
+- **Sleep**: our trigger `RAINY75_SLEEP` (`ZMK_SLEEP` off), `kb.sleep_min` (default 15 min) → `sys_poweroff` (DEEPSLEEP_MODE, cold boot)
 - **Studio**: `ZMK_STUDIO`, BLE GATT transport (WebBluetooth), unlock via Fn+ESC
 
 ## USB DC Driver
@@ -922,7 +922,7 @@ SAR ADC battery voltage sensor (`CONFIG_BATTERY_B91_ADC`):
 
 ## Deep Sleep
 
-Implemented in `zmk/src/poweroff.c` as `z_sys_poweroff()`, triggered by ZMK after 15 minutes idle (`CONFIG_ZMK_IDLE_SLEEP_TIMEOUT=900000`).
+Implemented in `zmk/src/poweroff.c` as `z_sys_poweroff()`, which Zephyr's `sys_poweroff()` calls with interrupts locked. The trigger is our module's (see [Sleep trigger](#sleep-trigger) below): by default after 15 minutes without activity, not while a USB host is connected.
 
 **Sequence:** RGB off (PC2 LOW) → USB DP pullup off → configure analog pull-downs on columns (100K) + pull-ups on rows (1M) → configure GPIO pad wakeup on all 6 row pins (LOW-level trigger) → enter `DEEPSLEEP_MODE` (0x30, cold boot).
 
@@ -933,6 +933,19 @@ Implemented in `zmk/src/poweroff.c` as `z_sys_poweroff()`, triggered by ZMK afte
 **GPIO wakeup config:** 6 row pins (PD2-PD6, PE0) via `pm_set_gpio_wakeup()`. SDK register layout: 0x41-0x45 = polarity (SET = LOW-level), 0x46-0x4A = enable. Wakeup status register 0x64 guards entry — all rows must be HIGH (no key pressed) to enter sleep.
 
 With the open BLE controller (the default build), `z_sys_poweroff()` first calls `b91_bt_controller_poweroff()`, which quiesces the link layer scheduler and the radio (both interrupt sources off). Deep sleep and the 15 minute timeout work unchanged, including wake and automatic reconnect to the bonded host. See [open-ble-controller.md](open-ble-controller.md#power-management).
+
+### Sleep trigger
+
+Since v0.4.0 our module decides when the keyboard sleeps, not ZMK (`CONFIG_ZMK_SLEEP=n`, `CONFIG_RAINY75_SLEEP=y` in `conf/app.conf`), so the timeout is a runtime setting. `zmk/src/sleep/sleep_adapter.c` checks once a second on the system work queue and asks the pure, host-tested `sleep_policy.c` (`zmk/src/sleep/tests/run_host_tests.sh`):
+
+- **Activity:** key position and sensor events (the events ZMK's `activity.c` counts) and every settings change (the registry's `rev`: a `set` or `reset` over mcumgr group 67, the Fn keys). Reads do not count, so an open config page (it polls `info` every second) does not keep the keyboard awake; neither do firmware uploads or ZMK Studio, as with ZMK's sleep.
+- **Decision:** `sleep_policy_should_sleep(idle_ms, kb.sleep_min, usb_host, kb.sleep_on_usb)` is false with `kb.sleep_min` 0, false with a USB host while `kb.sleep_on_usb` is off, else true once `idle_ms` exceeds `kb.sleep_min` minutes.
+- **USB host** (`sleep_policy_usb_host()`): `zmk_usb_is_hid_ready()`, true once a host configured the keyboard and also while it suspends the bus, so a key press can wake a sleeping computer (USB remote wakeup), except while the keyboard types over Bluetooth to another device and the computer has had USB asleep for about a minute: once the bus has been suspended (`zmk_usb_get_status()` is `USB_DC_SUSPEND`) with the selected output on Bluetooth for more than 60 s without a break (`SLEEP_POLICY_BLE_GRACE_MS`; the adapter keeps the 32-bit uptime at which both began and passes the elapsed time), a suspended bus does not count as a host. That exception is a deliberate choice: a key press goes to the Bluetooth device and cannot wake the computer anyway. The minute keeps it from firing for a Bluetooth link to the computer that suspends USB: when that computer sleeps, the link survives at most the BLE supervision timeout (up to 32 s), then ZMK's endpoint falls back to USB output, and the keyboard must stay awake so that a key press can wake the computer over USB. The B91 has no VBUS pin: a cable pulled from a sleeping computer looks like a computer that sleeps on. With the output on USB the next key presses end that (ZMK patches 0002 and 0004 re-attach the device, which clears `zmk_usb_is_hid_ready()`); with the output on Bluetooth only the exception lets the keyboard sleep. The exception needs the B91 to have noticed the suspend, which some Linux sleeps do not show ([USB Remote Wakeup](#usb-remote-wakeup)). Known limit: pulled from a sleeping computer and then left untouched with the output on USB, the keyboard stays awake until a key is pressed or it is plugged in again. The trigger logs its inputs and decision whenever one of them changes, one line each time, for example `sleep: usb configured=1 suspended=1 output=usb host=yes` (`output=` is `usb`, `ble`, or `none` while ZMK has no endpoint yet, at boot before any connection or on battery before the Bluetooth link is up), so a hardware test can see whether the B91 noticed a USB suspend.
+- **Sleep:** the sequence of ZMK's `activity.c`: `zmk_pm_suspend_devices()`, on failure `zmk_pm_resume_devices()` and a retry at the next check, then `sys_poweroff()`, which runs `z_sys_poweroff()` above. `RAINY75_SLEEP` selects `POWEROFF`, `PM_DEVICE` and `ZMK_PM_DEVICE_SUSPEND_RESUME` (without `ZMK_SLEEP`, `PM_DEVICE` would otherwise come only from ZMK Studio) and depends on `HAS_POWEROFF` and `!ZMK_SLEEP`, so the two triggers never run together.
+- **ZMK's activity states** stay: `activity.c` still raises ACTIVE and IDLE (`CONFIG_ZMK_IDLE_TIMEOUT`, 60 s; battery sampling pauses while idle). `ZMK_ACTIVITY_SLEEP` is no longer raised; only battery sampling listened to it, and it pauses at IDLE already. The lighting has its own idle timer (`rgb.idle_s`).
+- **Builds:** test images set `CONFIG_RAINY75_SLEEP=n` and `CONFIG_ZMK_SLEEP=n` (`conf/test-image.conf`); the OTA bridge and MCUboot leave it off. Without `CONFIG_RAINY75_CONFIG` the defaults apply (15 minutes, not on USB). RAM: about 72 B.
+- **Fallback:** `CONFIG_RAINY75_SLEEP=n`, `CONFIG_ZMK_SLEEP=y` and `CONFIG_ZMK_USB_NO_VBUS_DETECT=y` (the three commented lines in `conf/app.conf`) bring back ZMK's own sleep unchanged: 15 minutes (`CONFIG_ZMK_IDLE_SLEEP_TIMEOUT`, ZMK's default 900000), also on USB; the `kb.sleep_*` settings then do nothing.
+- **ZMK updates:** upstream idle and sleep changes no longer reach the trigger by themselves. After moving the ZMK pin, compare the changes of `app/src/activity.c`, `app/src/pm.c`, `app/include/zmk/pm.h`, `app/src/usb.c`, `app/src/endpoints.c` and the `ZMK_SLEEP` / `ZMK_PM*` Kconfig with `zmk/src/sleep/` (the USB host decision depends on `zmk_usb_is_hid_ready()`, its `is_configured`, and on the endpoint fallback to USB; checklist item in CLAUDE.md).
 
 ## MCUboot DFU
 
@@ -982,7 +995,7 @@ mcumgr --conntype serial --connstring /dev/ttyACM0 reset
 5. **5s delayed work** — calls `boot_write_img_confirmed()` to make swap permanent, disables WDT
 6. **If crash occurs** — WDT fires after 10s, chip resets, MCUboot sees unconfirmed image → reverts
 
-**Risky test images:** `./build.sh ... --test-image` (adds `conf/test-image.conf` = `CONFIG_RAINY75_MCUBOOT_MANUAL_CONFIRM=y`, never in a release) skips step 5's confirmation and only disables the WDT; it also turns deep sleep off (`CONFIG_ZMK_SLEEP=n`), because waking from deep sleep is a cold boot that would revert the unconfirmed image. The image then runs as long as needed, and any reset or power cycle goes back to the previous image, even if USB and BLE no longer work (with USB unplugged, the wireless switch under CapsLock cuts the power). Confirm a good test image by hand with `mcumgr image confirm <hash>`. Do not upload another image while a test image runs unconfirmed: slot 1 holds the fallback; reset back to it first. Used for the USB Studio port bring-up.
+**Risky test images:** `./build.sh ... --test-image` (adds `conf/test-image.conf` = `CONFIG_RAINY75_MCUBOOT_MANUAL_CONFIRM=y`, never in a release) skips step 5's confirmation and only disables the WDT; it also turns deep sleep off (`CONFIG_RAINY75_SLEEP=n`, and `CONFIG_ZMK_SLEEP=n` for the fallback), because waking from deep sleep is a cold boot that would revert the unconfirmed image. The image then runs as long as needed, and any reset or power cycle goes back to the previous image, even if USB and BLE no longer work (with USB unplugged, the wireless switch under CapsLock cuts the power). Confirm a good test image by hand with `mcumgr image confirm <hash>`. Do not upload another image while a test image runs unconfirmed: slot 1 holds the fallback; reset back to it first. Used for the USB Studio port bring-up.
 
 **Future:** MCUboot v2.3.0+ supports starting WDT in the bootloader itself (`BOOT_WATCHDOG_SETUP_AT_BOOT`), covering the gap between MCUboot boot and app WDT init. This requires Zephyr 4.3+ (MCUboot v2.3.0 is incompatible with Zephyr 4.1 on RISC-V). When ZMK upgrades, we can simplify: MCUboot starts WDT → driver preserves it → app feeds/confirms/disables. The DTS `watchdog0` alias is already in place for this.
 
@@ -1119,7 +1132,7 @@ Upstream reports 256B programming pages. MCUboot enumerates these as swap sector
 +	select HAS_POWEROFF
 ```
 
-TLSR951x supports `sys_poweroff()` via deep retention sleep, but upstream never declared `HAS_POWEROFF`. Without it, `CONFIG_POWEROFF` (and thus `CONFIG_ZMK_SLEEP`) cannot be enabled.
+TLSR951x supports `sys_poweroff()` via deep retention sleep, but upstream never declared `HAS_POWEROFF`. Without it, `CONFIG_POWEROFF` (and thus `CONFIG_ZMK_SLEEP` and `CONFIG_RAINY75_SLEEP`) cannot be enabled.
 
 **`drivers/console/uart_mcumgr.c` + `subsys/logging/backends/log_backend_uart.c`** (0010): log output never lands inside an SMP frame **[VERIFIED]**
 
@@ -1186,7 +1199,7 @@ The blob defines its own `sys_init()`, which collides with hal_telink's `sys.c`;
 
 **0001 — `app/Kconfig` + `app/src/activity.c`** — `ZMK_USB_NO_VBUS_DETECT` for boards without VBUS sensing
 
-B91 has no USB VBUS detection pin. Without this patch, `is_usb_power_present()` returns true (USB status stays at SUSPEND after unplug), preventing deep sleep from ever triggering. When `CONFIG_ZMK_USB_NO_VBUS_DETECT=y`, `is_usb_power_present()` always returns false, allowing the idle sleep timeout to work.
+B91 has no USB VBUS detection pin. Without this patch, `is_usb_power_present()` returns true (USB status stays at SUSPEND after unplug), preventing deep sleep from ever triggering. When `CONFIG_ZMK_USB_NO_VBUS_DETECT=y`, `is_usb_power_present()` always returns false, allowing the idle sleep timeout to work. Since v0.4.0 only the fallback to ZMK's own sleep uses it (see [Sleep trigger](#sleep-trigger)); with `CONFIG_ZMK_SLEEP=n` the symbol does not exist.
 
 **0002 — `app/src/usb.c`** — dead-bus heartbeat: re-present the device when the bus is provably dead while suspended (no VBUS detect means cable removal is invisible, so a returning host's bus reset can be missed).
 

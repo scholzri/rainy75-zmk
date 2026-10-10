@@ -229,9 +229,9 @@ Windows, macOS and iOS.
 
 - **Build before submitting:** `./build.sh -a --iso` (and `--ansi`) and run the host tests
   of what you touched: `zmk/src/rainy_rgb/tests/run_host_tests.sh`,
-  `zmk/src/config/tests/run_host_tests.sh`, `zmk/src/os_key/tests/run_host_tests.sh`, and
-  `node web/config/test-node.mjs` for the config page ([CONTRIBUTING.md](CONTRIBUTING.md)
-  lists all of them).
+  `zmk/src/config/tests/run_host_tests.sh`, `zmk/src/os_key/tests/run_host_tests.sh`,
+  `zmk/src/sleep/tests/run_host_tests.sh`, and `node web/config/test-node.mjs` for the
+  config page ([CONTRIBUTING.md](CONTRIBUTING.md) lists all of them).
 - **Keep it out-of-tree:** new firmware functionality lives under `zmk/`, so the ZMK pin
   can be bumped without losing it (the config page lives in `web/config/`).
 - **ANSI / other layouts:** ANSI is fully verified on hardware; other regional ISO

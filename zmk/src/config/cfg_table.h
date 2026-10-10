@@ -31,6 +31,8 @@ enum cfg_id {
     CFG_KB_OS,
     CFG_KB_GUI_LOCK,
     CFG_KB_OS_KEYS,
+    CFG_KB_SLEEP_MIN,
+    CFG_KB_SLEEP_ON_USB,
     CFG_ID_COUNT
 };
 

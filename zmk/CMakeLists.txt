@@ -97,6 +97,19 @@ if(CONFIG_RAINY75_OS_KEY)
   )
 endif()
 
+# Deep sleep trigger (src/sleep/): kb.sleep_min / kb.sleep_on_usb in place
+# of ZMK's CONFIG_ZMK_SLEEP, decisions in sleep_policy.c (host tested).
+if(CONFIG_RAINY75_SLEEP)
+  zephyr_library_named(rainy75_sleep)
+  zephyr_library_include_directories(
+    ${APPLICATION_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  zephyr_library_sources(
+    src/sleep/sleep_policy.c
+    src/sleep/sleep_adapter.c
+  )
+endif()
+
 # BLE policy on top of ZMK's public API: the &bt_sel_ble behavior and the
 # open profile timeout (see docs/zmk-firmware.md, "BLE policy module").
 if(CONFIG_ZMK_BLE)

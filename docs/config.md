@@ -113,7 +113,7 @@ Messages you may meet:
 | This is the ZMK Studio port. | You picked the Studio port: pick the other one. |
 | The port could not be opened (...) | Another program holds the port: close it and try again. While ZMK Studio is connected over USB its port is busy: choose the other Rainy 75 port. |
 | The keyboard is not paired with this computer. | Pair it first, as under Over Bluetooth: a free profile (Fn+F1, F2 or F3), the computer's Bluetooth settings, the code typed on the keyboard's number row, Enter. If the computer already lists it as paired, remove the pairing on both sides and pair again. |
-| Bluetooth adapter not available. | The computer has no working Bluetooth adapter, or Bluetooth is switched off: turn it on. USB still works. |
+| Bluetooth adapter not available. | The computer has no working Bluetooth adapter (on some systems also when Bluetooth is switched off; Chrome may instead show its own "Bluetooth is off" note in the chooser). Turn Bluetooth on or use USB. |
 | The keyboard did not answer over Bluetooth. | The remembered keyboard is not reachable: click Connect Bluetooth again and choose it from the list. |
 | This firmware has no runtime settings | The firmware is older than v0.4.0: update it. |
 | The keyboard refused: invalid value (rc 3) | The keyboard did not accept the value (also "unknown setting", "read-only setting"). The page shows the value the keyboard has. |
@@ -196,10 +196,11 @@ the top row to the bottom), `heatmap` (keys glow when pressed and cool down over
 one LED and steps to the next on each key press). Details: [rainy-rgb.md](rainy-rgb.md).
 
 "No USB host connected" means no computer has set up the keyboard over USB; a computer
-that sleeps still counts as connected. Known limit: if the computer put USB to sleep and
-the cable is then pulled, the keyboard can still count as connected (no cap, no low-battery
-pulse) until the next USB event; with output USB the first key press clears it, with output
-Bluetooth it can persist.
+that sleeps still counts as connected, except while the output is Bluetooth: then a USB bus
+the computer put to sleep counts as no host (the board dims while the computer sleeps). The
+keyboard cannot sense the cable itself, and a pull can look like a computer going to sleep:
+with the output on Bluetooth the cap and the low-battery pulse apply within about a second
+of the pull, with the output on USB from the next key press (a few seconds after the pull).
 
 ### Indicators
 
@@ -218,10 +219,22 @@ Bluetooth it can persist.
 | `kb.os` (Computer) | `win`, `mac` | `win` | `mac` swaps the left Win and Alt keys to Option and Command, as on a Mac keyboard ([usage.md](usage.md#windows-and-mac)). Right Alt stays AltGr. Applies from the next key press. |
 | `kb.gui_lock` (GUI key lock) | on, off | off | Silences the GUI key (Win, or Command on a Mac), for example while gaming. |
 | `kb.os_keys` (Keys following these settings) | 0 to 83, read-only | counted (2 with the default keymap) | How many keys use the OS Key behavior, counted from the live keymap. 0 means the left Win and Alt keys were rebound in ZMK Studio, so `kb.os` and `kb.gui_lock` change nothing; the page shows a warning then. Bind them to "OS Key" in Studio again and save, or use Restore Stock Settings there (it also drops your other saved Studio edits). |
+| `kb.sleep_min` (Sleep after) | 0 to 120 min | 15 | Minutes without a key press until the keyboard sleeps; 0 = never. A settings change (from the page, `rainy75_cfg.py` or the Fn keys) counts as a key press; an open page alone does not keep it awake. Not while a USB host is connected, unless `kb.sleep_on_usb` is on. Any key wakes it; typing works again after about 5 s. |
+| `kb.sleep_on_usb` (Sleep on USB) | on, off | off | Also sleep while a USB host is connected. Off: on USB the keyboard stays awake, also while the computer sleeps, so a key press can wake the computer; but it still sleeps while it types over Bluetooth to another device and the computer has had USB asleep for about a minute, because a key press then goes to that device. |
 
-The page also knows the sleep settings `kb.sleep_min` ("Sleep after": minutes without a
-key press until the keyboard sleeps, 0 = never) and `kb.sleep_on_usb` ("Sleep on USB":
-also sleep while a USB host is connected) and shows them once a firmware has them.
+Sleep and USB: "USB host connected" means a computer set up the keyboard over USB, also
+while it sleeps. Known limit: pulled from a sleeping computer, the keyboard can stay awake
+until a key is pressed with the output on USB, or it is plugged in again. One difference: while
+the keyboard types over Bluetooth to another device and the computer has had USB asleep
+for about a minute, the computer does not keep the keyboard awake (a key press goes to the
+other device and could not wake the computer anyway), so it sleeps then, if the keyboard
+noticed that the computer put USB to sleep (some Linux sleeps do not show it). The minute
+is for a Bluetooth link to the same computer: when that computer sleeps, the link drops
+within at most 32 s and the output goes back to USB, so the keyboard stays awake and a key
+press can wake the computer. A computer that is awake keeps it awake whatever the output,
+unless it suspends the keyboard's USB port to save power (USB autosuspend). Test images
+([CONTRIBUTING.md](../CONTRIBUTING.md#testing--verification)) never sleep; they keep both
+settings without effect.
 
 ## For developers
 
