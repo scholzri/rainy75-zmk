@@ -1176,7 +1176,8 @@
   /* A Web Serial port in software. sim: the SimKeyboard behind the console
    * port; null makes it the Studio port, which never answers. Every reply
    * comes after a log line, cut into reads of 7 bytes. stall makes every
-   * write hang until the stream is aborted (a writer that does not drain). */
+   * write hang until the stream is aborted (a writer that does not drain).
+   * opts.closeMs: close() takes that long, as a tty that drains its output. */
   class FakePort {
     constructor(C, sim, opts = {}) {
       this.C = C;
@@ -1188,6 +1189,8 @@
       this.ctrl = null;
       this.stall = false;
       this.writeAborted = false;
+      this.aborts = 0;
+      this.closeMs = opts.closeMs || 0;
     }
 
     getInfo() {
@@ -1229,6 +1232,9 @@
             }, 2);
           }
         },
+        abort() {
+          self.aborts++;
+        },
       });
     }
 
@@ -1238,6 +1244,7 @@
 
     async close() {
       if (this.readable.locked || this.writable.locked) throw new Error("Cannot close a locked port.");
+      if (this.closeMs) await sleep(this.closeMs);
       this.isOpen = false;
     }
 
@@ -1384,6 +1391,63 @@
     t.eq(port.opens, 2);
     await r.transport.close();
     t.ok(!port.readable.locked && !port.writable.locked);
+  });
+
+  test("usb: a silent probe drops its output before it closes the port", async (C) => {
+    const port = new FakePort(C, null);
+    t.eq(await C.probeSerial(port, 200), { ok: false, reason: "silent" });
+    t.eq([port.aborts, port.isOpen], [1, false], "the writer was aborted, the port closed");
+    t.eq([C.CLOSE_MS, C.REPLUG_WAITS], [3000, [300, 700, 1500]]);
+  });
+
+  test("usb: a probe waits at most CLOSE_MS for the close, the next one for the rest", async (C) => {
+    const port = new FakePort(C, null, { closeMs: C.CLOSE_MS + 400 });
+    const t0 = Date.now();
+    t.eq(await C.probeSerial(port, 200), { ok: false, reason: "silent" });
+    t.ok(Date.now() - t0 < C.CLOSE_MS + 350, "not the whole close");
+    t.ok(port.isOpen, "still closing");
+    port.sim = new C.SimKeyboard();
+    port.closeMs = 0;
+    const r = await C.probeSerial(port, 200);
+    t.ok(r.ok, "opened again once the close was done");
+    t.eq(port.opens, 2);
+    await r.transport.close();
+  });
+
+  test("usb: after a replug a silent console is looked at again", async (C) => {
+    const consolePort = new FakePort(C, null);
+    const busy = new FakePort(C, null, { failOpen: true });
+    let looks = 0;
+    const serial = {
+      getPorts: async () => {
+        if (++looks === 3) consolePort.sim = new C.SimKeyboard();
+        return [busy, consolePort];
+      },
+    };
+    const r = await C.findGrantedPort(serial, 100, [0, 10, 10, 10]);
+    t.ok(r && r.ok, "the third look finds it");
+    t.eq([looks, consolePort.opens, busy.opens], [3, 3, 1], "a busy port is not tried again");
+    await r.transport.close();
+  });
+
+  test("usb: the looks end when no port stays silent, or after the last wait", async (C) => {
+    const busy = new FakePort(C, null, { failOpen: true });
+    let looks = 0;
+    const count = (ports) => ({
+      getPorts: async () => {
+        looks++;
+        return ports;
+      },
+    });
+    t.eq(await C.findGrantedPort(count([busy]), 100, [0, 10, 10]), null);
+    t.eq([looks, busy.opens], [1, 1], "busy elsewhere: one look");
+    looks = 0;
+    t.eq(await C.findGrantedPort(count([]), 100, [0, 10, 10]), null);
+    t.eq(looks, 1, "no keyboard port: one look");
+    looks = 0;
+    const studio = new FakePort(C, null);
+    t.eq(await C.findGrantedPort(count([studio]), 100, [0, 10, 10]), null);
+    t.eq([looks, studio.opens, studio.isOpen], [3, 3, false], "the Studio port: every look, closed again");
   });
 
   // ---- Task 10: Web Bluetooth transport ----

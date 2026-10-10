@@ -589,6 +589,8 @@ button.mv { padding: .1rem .5rem; }
   const PROBE_MS = 1000;
   const REQUEST_MS = 2000; /* SMP request timeout per attempt over USB */
   const WRITE_MS = 2000; /* a write that is not done by then fails (SmpClient waits for send()) */
+  const CLOSE_MS = 3000; /* a probe waits this long for the port it closes */
+  const REPLUG_WAITS = [300, 700, 1500]; /* looks after a replug, about 5 s in all */
 
   class SerialTransport {
     constructor(port) {
@@ -709,36 +711,75 @@ button.mv { padding: .1rem .5rem; }
     return i.usbVendorId === USB_IDS.usbVendorId && i.usbProductId === USB_IDS.usbProductId;
   }
 
+  /* -> true if p settles within ms */
+  function within(p, ms) {
+    let timer;
+    const late = new Promise((resolve) => {
+      timer = setTimeout(resolve, ms, false);
+    });
+    return Promise.race([p.then(() => true, () => true), late]).finally(() => clearTimeout(timer));
+  }
+
+  /* A port a probe let go of, while its close still runs (port -> promise). */
+  const closing = new WeakMap();
+
+  /* Closes the port of a probe that does not attach. The output is dropped
+   * (as for a stalled write): a device that does not read yet, just after a
+   * replug, would keep port.close() and the port open until it drains. Waits
+   * at most CLOSE_MS; a later probe of the port waits for the rest. */
+  async function release(port, transport, client) {
+    if (client) client.close();
+    transport.stalled = true;
+    const done = transport.close().finally(() => closing.delete(port));
+    closing.set(port, done);
+    await within(done, CLOSE_MS);
+  }
+
   /* -> {ok: true, transport, client} for the console port, {ok: false,
-   * reason: "silent"} for a port that does not answer (the Studio port), or
-   * {ok: false, reason: "open", error} if the port cannot be opened. */
+   * reason: "silent"} for a port that does not answer (the Studio port, or the
+   * console right after a replug), or {ok: false, reason: "open", error} if
+   * the port cannot be opened. Never throws; a port it does not hand on is
+   * closed again. */
   async function probeSerial(port, probeMs = PROBE_MS) {
+    const pending = closing.get(port);
+    if (pending && !(await within(pending, CLOSE_MS))) return { ok: false, reason: "silent" };
     const transport = new SerialTransport(port);
+    let client = null;
     try {
       await transport.open();
     } catch (error) {
-      await transport.close();
+      await release(port, transport, null);
       return { ok: false, reason: "open", error };
     }
-    const client = new C.SmpClient(transport, { timeoutMs: REQUEST_MS, retries: 1 });
     try {
+      client = new C.SmpClient(transport, { timeoutMs: REQUEST_MS, retries: 1 });
       await client.request(C.SMP.READ, C.SMP.GROUP_CFG, 0, {}, { timeoutMs: probeMs / 2, retries: 1 });
     } catch (e) {
       if (!(e instanceof C.DeviceError)) {
-        client.close();
-        await transport.close();
+        await release(port, transport, client);
         return { ok: false, reason: "silent" };
       }
     }
     return { ok: true, transport, client };
   }
 
-  /* Later visits: the ports this page may use already, without a picker. */
-  async function findGrantedPort(serial, probeMs) {
-    for (const port of await serial.getPorts()) {
-      if (!isKeyboardPort(port)) continue;
-      const r = await probeSerial(port, probeMs);
-      if (r.ok) return r;
+  /* Later visits: the ports this page may use already, without a picker.
+   * waits: the pause before each look. While a port stays silent the page
+   * looks again (the Studio port always is; the console may be, just after a
+   * replug); a port busy elsewhere is not tried again. */
+  async function findGrantedPort(serial, probeMs, waits = [0]) {
+    const busy = new Set();
+    for (const ms of waits) {
+      if (ms) await new Promise((resolve) => setTimeout(resolve, ms));
+      let silent = false;
+      for (const port of await serial.getPorts()) {
+        if (!isKeyboardPort(port) || busy.has(port)) continue;
+        const r = await probeSerial(port, probeMs);
+        if (r.ok) return r;
+        if (r.reason === "open") busy.add(port);
+        else silent = true;
+      }
+      if (!silent) break;
     }
     return null;
   }
@@ -752,8 +793,8 @@ button.mv { padding: .1rem .5rem; }
     "program using it (a serial terminal, rainy75_cfg.py) and try again. While ZMK Studio is connected " +
     "over USB, its port is busy: choose the other Rainy 75 port.";
 
-  Object.assign(C, { USB_IDS, PROBE_MS, REQUEST_MS, WRITE_MS, SerialTransport, isKeyboardPort, probeSerial,
-    findGrantedPort, pickPort, portBusyText });
+  Object.assign(C, { USB_IDS, PROBE_MS, REQUEST_MS, WRITE_MS, CLOSE_MS, REPLUG_WAITS, SerialTransport,
+    isKeyboardPort, probeSerial, findGrantedPort, pickPort, portBusyText });
   // end of USB transport
 })();
 </script>
@@ -1862,7 +1903,7 @@ button.mv { padding: .1rem .5rem; }
   let conn = null; /* {kind, transport, client, model, rows, throttleMs} */
   let busy = false; /* connecting */
   let blePicker = false; /* the remembered keyboard did not answer: use the picker */
-  let again = false; /* a port appeared while busy: look again */
+  let again = false; /* a port appeared while busy or connected: look again */
 
   /* h("p", {class: "help", onclick: fn}, "text", child) -> element */
   function h(tag, attrs, ...kids) {
@@ -1913,6 +1954,7 @@ button.mv { padding: .1rem .5rem; }
     const model = new C.ConfigModel(client, C.isKnown);
     const me = { kind, transport, client, model, rows: new Map(), throttleMs: kind === "ble" ? 150 : 50 };
     conn = me;
+    again = false;
     buttons();
     client.onClose = () => lost(me);
     model.on((ev) => modelEvent(me, ev));
@@ -1953,6 +1995,8 @@ button.mv { padding: .1rem .5rem; }
     if (conn !== me) return;
     drop(me, "Connection lost");
     say("Connection lost. Connect again.");
+    /* a replug seen before the loss was noticed */
+    if (again) autoConnect(false, "Connection lost");
   }
 
   async function pollLoop(me) {
@@ -2011,6 +2055,7 @@ button.mv { padding: .1rem .5rem; }
     if (found) return attach("usb", found.transport, found.client);
     setState("Not connected");
     buttons();
+    if (again) autoConnect(false);
   }
 
   async function connectBle() {
@@ -2051,10 +2096,14 @@ button.mv { padding: .1rem .5rem; }
     if (found) return attach("ble", found.transport, found.client);
     setState("Not connected");
     buttons();
+    if (again) autoConnect(false);
   }
 
-  /* Page load: a port or keyboard granted on an earlier visit, no picker. */
-  async function autoConnect(useBle) {
+  /* Page load: a port or keyboard granted on an earlier visit, no picker.
+   * Later (useBle false) a port that appeared: it is looked at several times,
+   * as the console may not answer right after the replug. idle: the state if
+   * nothing is found. */
+  async function autoConnect(useBle, idle = "Not connected") {
     busy = true;
     again = false;
     buttons();
@@ -2062,7 +2111,7 @@ button.mv { padding: .1rem .5rem; }
     let kind = "usb";
     if (hasSerial) {
       setState("Looking for the keyboard");
-      found = await C.findGrantedPort(navigator.serial).catch(() => null);
+      found = await C.findGrantedPort(navigator.serial, C.PROBE_MS, useBle ? [0] : C.REPLUG_WAITS).catch(() => null);
     }
     if (!found && useBle && hasBle) {
       const device = await C.rememberedDevice(navigator.bluetooth).catch(() => null);
@@ -2074,7 +2123,7 @@ button.mv { padding: .1rem .5rem; }
     }
     busy = false;
     if (found && !conn) return attach(kind, found.transport, found.client);
-    if (!conn) setState("Not connected");
+    if (!conn) setState(idle);
     buttons();
     if (again && !conn) return autoConnect(false);
   }
@@ -2466,8 +2515,8 @@ button.mv { padding: .1rem .5rem; }
     }
     if (hasSerial) {
       navigator.serial.addEventListener("connect", () => {
-        if (busy) again = true;
-        else if (!conn) autoConnect(false);
+        if (busy || conn) again = true;
+        else autoConnect(false);
       });
     }
     autoConnect(true);
