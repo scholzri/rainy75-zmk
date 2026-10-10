@@ -957,6 +957,138 @@
     t.ok(e instanceof C.TransportError);
   });
 
+  /* Fix 1: the value a set echoed is the truth. The client runs one request
+   * at a time, so a set started during page 1 of a full read runs between
+   * page 1 and page 2; the old value of page 1 must not replace the echo. */
+  function raceSet(C, m, key, value) {
+    const handle = m.sim.handle.bind(m.sim);
+    const race = { promise: null, seen: [] };
+    m.sim.handle = (frame) => {
+      const reply = handle(frame);
+      const h = C.smpParse(frame);
+      if (!race.promise && h.group === 67 && h.cmd === 2 && !h.body.k) race.promise = m.model.set(key, value);
+      return reply;
+    };
+    m.model.on(() => race.seen.push(m.model.values.get(key)));
+    return race;
+  }
+
+  test("model: a set during a poll's full read keeps its echo", async (C) => {
+    const m = simModel(C);
+    await m.model.load();
+    const race = raceSet(C, m, "rgb.val", 50);
+    m.sim.pressFnEnter();
+    const before = m.sim.requests.length;
+    await m.model.poll();
+    await race.promise;
+    t.eq(cmds(m.sim).slice(before), ["67/0", "67/2", "67/3", "67/2"], "info, page 1, set, page 2");
+    t.eq(m.model.values.get("rgb.val"), 50);
+    t.eq(m.sim.values["rgb.val"], 50);
+    t.eq(m.model.values.get("rgb.effect"), "rainbow", "the rest of the read is kept");
+    t.ok(race.seen.length >= 2 && race.seen.every((v) => v === 50), "no event shows the old value: " + show(race.seen));
+    t.eq(m.model.info.rev, 1);
+  });
+
+  test("model: a set during a reset's read keeps its echo", async (C) => {
+    const m = simModel(C);
+    await m.model.load();
+    const race = raceSet(C, m, "rgb.val", 50);
+    await m.model.reset(["kb.os"]);
+    await race.promise;
+    t.eq(m.model.values.get("rgb.val"), 50);
+    t.ok(race.seen.length >= 2 && race.seen.every((v) => v === 50), "no event shows the old value: " + show(race.seen));
+  });
+
+  test("model: a set during a load's read keeps its echo", async (C) => {
+    const m = simModel(C);
+    await m.model.load();
+    const race = raceSet(C, m, "rgb.hue", 77);
+    await m.model.load();
+    await race.promise;
+    t.eq(m.model.values.get("rgb.hue"), 77);
+    t.ok(race.seen.length >= 2 && race.seen.every((v) => v === 77), "no event shows the old value: " + show(race.seen));
+  });
+
+  test("model: a set stores the echo, not the value it sent", async (C) => {
+    const m = simModel(C);
+    await m.model.load();
+    const request = m.client.request.bind(m.client);
+    m.client.request = (op, group, cmd, body, opts) => (cmd === 3 && group === 67
+      ? Promise.resolve({ rc: 0, v: 77 }) : request(op, group, cmd, body, opts));
+    t.eq(await m.model.set("rgb.val", 120), 77);
+    t.eq(m.model.values.get("rgb.val"), 77);
+    t.eq(m.events.slice(-1), [{ type: "values", keys: ["rgb.val"] }]);
+  });
+
+  test("model: poll reloads everything when n or fx changed", async (C) => {
+    const m = simModel(C);
+    await m.model.load();
+    m.sim.defs.push({ key: "rgb.future", type: "u", min: 0, max: 9, def: 1 });
+    m.sim.values["rgb.future"] = 1;
+    const before = m.sim.requests.length;
+    await m.model.poll();
+    t.eq(cmds(m.sim).slice(before, before + 3), ["67/0", "67/0", "67/1"], "poll's info, then load");
+    t.eq(cmds(m.sim).slice(-1), ["1/0"]);
+    t.eq([m.model.info.n, m.model.entries.size, m.model.values.get("rgb.future")], [22, 22, 1]);
+    t.eq(m.events.map((e) => e.type), ["loaded", "loaded"]);
+    m.sim.fx.push("fireworks");
+    await m.model.poll();
+    t.eq(m.model.info.fx.slice(-1), ["fireworks"]);
+    t.eq(m.model.entries.get("rgb.effect").a.slice(-1), ["fireworks"]);
+    t.eq(m.events.map((e) => e.type), ["loaded", "loaded", "loaded"]);
+  });
+
+  test("model: a failed read leaves the state and is tried again", async (C) => {
+    const m = simModel(C);
+    await m.model.load();
+    m.sim.pressFnEnter();
+    m.sim._get = () => ({ rc: 7 });
+    const e = await t.rejects(m.model.poll(), /rc 7/);
+    t.ok(e instanceof C.DeviceError);
+    t.eq(m.model.info.rev, 0, "rev unchanged");
+    t.eq(m.model.values.get("rgb.effect"), "solid");
+    delete m.sim._get;
+    await m.model.poll();
+    t.eq(m.model.info.rev, 1);
+    t.eq(m.model.values.get("rgb.effect"), "rainbow", "read again by the next poll");
+    m.sim.defs.push({ key: "rgb.future", type: "u", min: 0, max: 9, def: 1 });
+    m.sim.values["rgb.future"] = 1;
+    m.sim._get = () => ({ rc: 7 });
+    await t.rejects(m.model.poll(), /rc 7/);
+    t.eq([m.model.info.n, m.model.entries.size, m.model.values.size], [21, 21, 21], "a failed load changes nothing");
+    delete m.sim._get;
+    await m.model.poll();
+    t.eq([m.model.info.n, m.model.entries.size, m.model.values.size], [22, 22, 22]);
+  });
+
+  test("model: a refused reset re-reads and throws on", async (C) => {
+    const m = simModel(C);
+    await m.model.load();
+    m.sim.setOsKeys(1);
+    m.sim.values["rgb.val"] = 99;
+    const e = await t.rejects(m.model.reset(["kb.os_keys", "rgb.val"]), /rc 11/);
+    t.ok(e instanceof C.DeviceError);
+    t.eq(m.model.values.get("rgb.val"), 99, "what the keyboard has");
+    t.eq(m.model.values.get("kb.os_keys"), 1);
+    t.eq(m.events.slice(-1), [{ type: "values" }]);
+    m.sim._get = () => ({ rc: 7 });
+    const again = await t.rejects(m.model.reset(["kb.os_keys"]), /rc 11/);
+    t.ok(again instanceof C.DeviceError, "the refusal, not the failed re-read");
+    delete m.sim._get;
+  });
+
+  test("model: a lost connection during reset is not read again", async (C) => {
+    const m = simModel(C);
+    await m.model.load();
+    const before = m.sim.requests.length;
+    const events = m.events.length;
+    m.tr.drop = 2;
+    const e = await t.rejects(m.model.reset(), /no answer/);
+    t.ok(e instanceof C.TransportError);
+    t.eq(cmds(m.sim).slice(before), [], "no second attempt to read");
+    t.eq(m.events.length, events);
+  });
+
   // ---- Task 8: labels and help ----
 
   /* The settings of PRs 1 to 3 (docs/config-protocol.md) and PR 5. */

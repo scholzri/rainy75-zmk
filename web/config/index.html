@@ -862,16 +862,18 @@ body {
    * version; poll() (every second) reads info and re-reads all values when
    * rev changed (rev is only compared for inequality), kb.os_keys every
    * OS_KEYS_EVERY polls as well (a ZMK Studio keymap edit changes it without
-   * changing rev); set() keeps the value the keyboard echoes. Listeners get
+   * changing rev); set() keeps the value the keyboard echoes, also against
+   * a full read that started before it (see _read). Listeners get
    * {type: "loaded"} (entries changed: render again) and {type: "values",
    * keys} (keys undefined: all). known(entry) tells which settings the page
    * can show; the others are counted by hiddenCount(). */
   const CMD = { INFO: 0, LIST: 1, GET: 2, SET: 3, RESET: 4 };
   const OS_KEYS_EVERY = 5;
   const PAGES_MAX = 64;
-  /* The same wording as RC_TEXT in reverse/tools/rainy75_cfg.py. */
-  const RC_TEXT = { 3: "invalid value", 5: "unknown setting", 7: "reply too large",
-    8: "not supported: this firmware has no runtime settings (mcumgr group 67), update it",
+  /* As RC_TEXT in reverse/tools/rainy75_cfg.py, except rc 8: load() turns rc 8
+   * on the first info into NoSettingsError, so it only shows here after a
+   * successful load, where it means an unknown command or the wrong op. */
+  const RC_TEXT = { 3: "invalid value", 5: "unknown setting", 7: "reply too large", 8: "not supported",
     11: "read-only setting" };
   const NO_SETTINGS = "This firmware has no runtime settings (mcumgr group 67, new in v0.4.0). " +
     "Update the keyboard's firmware, then connect again.";
@@ -898,6 +900,8 @@ body {
       this.values = new Map();
       this.firmware = null;
       this.polls = 0;
+      this.writes = 0; /* sets that stored an echo */
+      this.wroteAt = new Map(); /* key -> the number of its last echo */
       this.listeners = [];
     }
 
@@ -921,10 +925,14 @@ body {
         if (e instanceof C.DeviceError && e.rc === 8) throw new NoSettingsError();
         throw e;
       }
+      const entries = await this._readList();
+      const values = await this._readAll();
+      const firmware = await this._firmware();
+      /* Everything at the end: a failed read leaves the old state, and the next poll tries again. */
       this.info = { v: info.v, n: info.n, fx: info.fx || [], rev: info.rev };
-      await this._readList();
-      this.values = new Map(Object.entries(await this._read()));
-      this.firmware = await this._firmware();
+      this.entries = entries;
+      this.values = values;
+      this.firmware = firmware;
       this._emit({ type: "loaded" });
     }
 
@@ -937,11 +945,16 @@ body {
         if (typeof r.next !== "number" || r.next <= i) break;
         i = r.next;
       }
-      this.entries = entries;
+      return entries;
     }
 
-    /* All values, or those of keys; follows next page by page. */
+    /* All values, or those of keys; follows next page by page. The client
+     * runs one request at a time, so a set started meanwhile runs between two
+     * pages and an earlier page may hold the value from before it: the echo
+     * of a set that stored one during the read replaces that value (the echo
+     * is the truth; a later change by the keyboard shows in rev). */
     async _read(keys) {
+      const start = this.writes;
       const out = {};
       let i = 0;
       for (let page = 0; page < PAGES_MAX; page++) {
@@ -950,7 +963,13 @@ body {
         if (typeof r.next !== "number" || r.next <= i) break;
         i = r.next;
       }
+      for (const [k, n] of this.wroteAt) if (n > start && k in out) out[k] = this.values.get(k);
       return out;
+    }
+
+    /* Every value as a Map. */
+    async _readAll() {
+      return new Map(Object.entries(await this._read()));
     }
 
     /* The running image from the image list (group 1); null if unknown. */
@@ -980,8 +999,8 @@ body {
         return;
       }
       if (info.rev !== this.info.rev) {
-        this.info.rev = info.rev;
-        this.values = new Map(Object.entries(await this._read()));
+        this.values = await this._readAll();
+        this.info.rev = info.rev; /* only after the read: a failed one is tried again */
         this._emit({ type: "values" });
       } else if (this.polls % OS_KEYS_EVERY === 0) {
         await this.refresh(["kb.os_keys"]);
@@ -1006,6 +1025,7 @@ body {
       try {
         const r = await this._cfg(C.SMP.WRITE, CMD.SET, { k: key, v });
         this.values.set(key, r.v);
+        this.wroteAt.set(key, ++this.writes);
         this._emit({ type: "values", keys: [key] });
         return r.v;
       } catch (e) {
@@ -1014,14 +1034,22 @@ body {
       }
     }
 
-    /* Back to the defaults: keys, or every writable setting. */
+    /* Back to the defaults: keys, or every writable setting. The values are
+     * read again afterwards; a refusal (DeviceError) also reads them, as set()
+     * does, before it is thrown on; a lost connection is thrown at once. */
     async reset(keys) {
       try {
         await this._cfg(C.SMP.WRITE, CMD.RESET, keys ? { k: keys } : {});
-      } finally {
-        this.values = new Map(Object.entries(await this._read()));
-        this._emit({ type: "values" });
+      } catch (e) {
+        if (e instanceof C.DeviceError) await this._reloadValues().catch(() => {});
+        throw e;
       }
+      await this._reloadValues();
+    }
+
+    async _reloadValues() {
+      this.values = await this._readAll();
+      this._emit({ type: "values" });
     }
   }
 
