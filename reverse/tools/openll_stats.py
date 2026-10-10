@@ -197,17 +197,12 @@ async def read_ble(address=None, timeout=10.0):
     kb = b.Rainy75BLE(address=address, timeout=timeout)
     await kb.connect()
     try:
-        old = b.RGB_GROUP
-        b.RGB_GROUP = GROUP
+        s = await kb._request(SMP_OP_READ, CMD_STATS, [], group=GROUP)
         try:
-            s = await kb._request(SMP_OP_READ, CMD_STATS, [])
-            try:
-                a = await kb._request(SMP_OP_READ, CMD_ARB, [])
-            except RuntimeError:
-                a = None   # older firmware: no command 1
-            return normalize(s, a)
-        finally:
-            b.RGB_GROUP = old
+            a = await kb._request(SMP_OP_READ, CMD_ARB, [], group=GROUP)
+        except RuntimeError:
+            a = None   # older firmware: no command 1
+        return normalize(s, a)
     finally:
         # Never disconnects a link that was already up (live HID session).
         await kb.disconnect()

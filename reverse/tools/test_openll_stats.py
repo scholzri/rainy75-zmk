@@ -212,5 +212,32 @@ class T(unittest.TestCase):
         self.assertEqual(o.GROUP, 66)
 
 
+class BleGroup(unittest.TestCase):
+    def test_read_ble_asks_group_66(self):
+        import asyncio, types
+        from unittest import mock
+        groups = []
+
+        class Kb:
+            def __init__(self, **kw):
+                pass
+
+            async def connect(self):
+                pass
+
+            async def disconnect(self):
+                pass
+
+            async def _request(self, op, cmd, payload, group=65):
+                groups.append(group)
+                return {}
+
+        b = types.SimpleNamespace(Rainy75BLE=Kb)   # bleak may be missing
+        with mock.patch.dict("sys.modules", {"rainy75_rgb_ble": b}), \
+                mock.patch.object(o, "normalize", lambda s, a: None):
+            asyncio.run(o.read_ble())
+        self.assertEqual(groups, [66, 66])
+
+
 if __name__ == "__main__":
     unittest.main()
