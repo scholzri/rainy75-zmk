@@ -123,6 +123,24 @@ static void test_held_limit(void) {
     CHECK(os_key_release(0) == ALT && os_key_release(2) == ALT && os_key_release(3) == ALT);
 }
 
+/* A press that found the table full sent nothing and is not remembered: when
+ * another key's release frees a slot, the overflowed key's own release must
+ * still send nothing (it would release a modifier it never pressed, for ZMK
+ * the same one another held key sent). */
+static void test_overflow_then_free(void) {
+    os_key_reset();
+    for (uint32_t p = 0; p < OS_KEY_HELD_MAX; p++) {
+        CHECK(os_key_press(p, ALT) == ALT);
+    }
+    CHECK(os_key_press(100, GUI) == 0);    /* overflow: nothing sent */
+    CHECK(os_key_release(1) == ALT);       /* another key frees a slot */
+    CHECK(os_key_release(100) == 0);       /* X's release: nothing, X was never held */
+    CHECK(os_key_release(100) == 0);       /* and still nothing */
+    CHECK(os_key_press(100, GUI) == GUI);  /* a fresh press of X works, in the freed slot */
+    CHECK(os_key_release(100) == GUI);
+    CHECK(os_key_release(0) == ALT && os_key_release(2) == ALT && os_key_release(3) == ALT);
+}
+
 static void test_invalid_param(void) {
     os_key_reset();
     CHECK(os_key_press(POS_GUI, 0x000700E0u) == 0);
@@ -130,6 +148,7 @@ static void test_invalid_param(void) {
 }
 
 static void test_reset(void) {
+    os_key_reset(); /* not the state the previous test left */
     os_key_set_mode(MAC, true);
     CHECK(os_key_press(POS_ALT, GUI) == ALT);
     os_key_reset();
@@ -171,6 +190,7 @@ int main(void) {
     test_same_key_twice();
     test_position_pressed_again();
     test_held_limit();
+    test_overflow_then_free();
     test_invalid_param();
     test_reset();
     test_count_bound();
