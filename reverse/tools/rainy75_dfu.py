@@ -18,9 +18,10 @@ Usage:
     rainy75_dfu.py reset
 
 The port is found by USB product name (the console port, interface 0); use
---port to name it. --ble updates over Bluetooth instead (needs bleak, and a
-computer the keyboard is paired with; --address picks the keyboard if there is
-more than one): about 30 to 60 s for an image, useful when USB is not at hand. A test image runs once: it stays only if it (or you)
+--port to name it. Without a keyboard on USB the tool goes over Bluetooth
+(needs bleak, and a computer the keyboard is paired with; --ble forces it,
+--address picks the keyboard if there is more than one): about 20 s for an
+image instead of about 12 s. A test image runs once: it stays only if it (or you)
 confirms it, else the next reset goes back to the previous image.
 """
 
@@ -313,7 +314,7 @@ def parse_hash(text):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--port", help="serial port (default: found by USB name)")
-    ap.add_argument("--ble", action="store_true", help="over Bluetooth instead of USB")
+    ap.add_argument("--ble", action="store_true", help="over Bluetooth even if the keyboard is on USB")
     ap.add_argument("--address", help="with --ble: the keyboard's Bluetooth address")
     sub = ap.add_subparsers(dest="cmd", required=True)
     up = sub.add_parser("upload", help="upload a signed image to slot 1")
@@ -328,17 +329,19 @@ def main():
     sub.add_parser("reset", help="reset the keyboard")
     a = ap.parse_args()
 
-    if a.ble:
+    port = None if a.ble else (a.port or rainy75_rgb.find_port())
+    if port:
+        dfu = Dfu(port)
+    else:
+        if not a.ble:
+            print("No Rainy 75 on USB, using Bluetooth.")
         port = "Bluetooth"
         try:
             dfu = BleDfu(a.address)
+        except SystemExit:                  # rainy75_rgb_ble without bleak
+            sys.exit("No Rainy 75 on USB, and Bluetooth needs bleak (pip install bleak).")
         except Exception as e:
-            sys.exit(f"No Bluetooth connection to the Rainy 75: {e}")
-    else:
-        port = a.port or rainy75_rgb.find_port()
-        if not port:
-            sys.exit("No Rainy 75 found on USB (use --port, or --ble).")
-        dfu = Dfu(port)
+            sys.exit(f"No Rainy 75 on USB, and no Bluetooth connection: {e}")
     try:
         if a.cmd == "upload":
             data = open(a.file, "rb").read()

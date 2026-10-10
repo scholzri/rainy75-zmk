@@ -209,13 +209,10 @@ python3 reverse/tools/rainy75_dfu.py upload build/zephyr/zmk.signed.bin --test -
 It uploads the image, checks it arrived intact, marks it for a test boot and resets.
 `rainy75_dfu.py list` shows the images; `confirm` makes the running one permanent by hand.
 
-No cable at hand? Add `--ble` to update over Bluetooth from a computer the keyboard is
-paired with (needs `pip install bleak`; `--address` picks the keyboard if there are
-several). It works the same way and takes about 20 s instead of about 12 s:
-
-```bash
-python3 reverse/tools/rainy75_dfu.py --ble upload build/zephyr/zmk.signed.bin --test --reset
-```
+No cable at hand? Without a keyboard on USB the same command goes over Bluetooth, from a
+computer the keyboard is paired with (needs `pip install bleak`; `--ble` forces Bluetooth,
+`--address` picks the keyboard if there are several). It takes about 20 s instead of about
+12 s.
 
 The [mcumgr CLI](https://github.com/apache/mynewt-mcumgr-cli) works too, but takes about 85 s
 over USB (it pauses after every serial line, which USB does not need):
