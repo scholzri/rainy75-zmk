@@ -302,11 +302,18 @@ static void rrgb_loop(void *a, void *b, void *c) {
          * to hold a steady RRGB_FPS regardless of render duration. */
         int64_t deadline = k_uptime_get() + RRGB_PERIOD_MS;
 
-        /* Idle timer (rgb.idle_s / rgb.idle_mode). last_activity_ms is read
-         * BEFORE the clock, so a key stamped in between is never newer than
-         * now (that would read as a huge idle time and blank one frame). */
+        /* Idle timer (rgb.idle_s / rgb.idle_mode). The writers (settings
+         * path, key events) run above this thread, so they only come in
+         * between two of these reads. The settings are read BEFORE
+         * last_activity_ms: a change (timeout, then a new timestamp) is then
+         * never seen as the new timeout with the old timestamp. The
+         * timestamp is read BEFORE the clock, so a key stamped in between is
+         * never newer than now. Either would read as idle and turn the
+         * effect off for one frame. */
+        uint16_t timeout_s = idle_s;
+        uint8_t mode = idle_mode;
         uint32_t last = last_activity_ms;
-        enum rrgb_idle_state idle = rrgb_idle_state(k_uptime_get_32(), last, idle_s, idle_mode);
+        enum rrgb_idle_state idle = rrgb_idle_state(k_uptime_get_32(), last, timeout_s, mode);
         /* Render when the effect shows OR a functional overlay (caps / Fn-highlight
          * / battery gauge / BLE status) needs to show, so indicators work with RGB
          * off and while idle. Idle "off" turns only the effect off (the first

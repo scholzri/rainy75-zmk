@@ -223,6 +223,9 @@ static const char *rrgb_fn_dev_at(uint16_t pos, void *ctx) {
     return b != NULL ? b->behavior_dev : NULL;
 }
 
+BUILD_ASSERT(ZMK_KEYMAP_LEN <= RRGB_FN_MASK_WORDS * 32,
+             "the Fn highlight mask (RRGB_FN_MASK_WORDS) does not cover every keymap position");
+
 static void rrgb_fn_keys_refresh(void) {
     uint32_t mask[RRGB_FN_MASK_WORDS];
 
