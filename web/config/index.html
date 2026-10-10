@@ -106,7 +106,7 @@ ol.cycle li {
   display: flex; align-items: center; gap: .5rem; padding: .3rem .5rem;
   background: var(--bg); border: 1px solid var(--line); border-radius: .4rem;
 }
-ol.cycle label { flex: 1; }
+ol.cycle .txt { flex: 1; }
 ol.cycle .grip { color: var(--muted); cursor: grab; }
 button.mv { padding: .1rem .5rem; }
 /* end of styles */
@@ -1701,8 +1701,8 @@ button.mv { padding: .1rem .5rem; }
     { key: "rgb.cycle", type: "l", label: "Effect cycle",
       help: "The effects Fn+Enter steps through, in this order; from an effect that is not in the list it " +
         "goes to the first one. Tick the ones you want and drag them, or use the up and down arrow " +
-        "buttons (Move up, Move down) of a row, to set the order. With none ticked, all effects are used. A list holds at most 16 entries. Applies from " +
-        "the next Fn+Enter." },
+        "buttons (Move up, Move down) of a row, to set the order. At least one stays ticked. A list " +
+        "holds at most 16 entries. Applies from the next Fn+Enter." },
     { key: "rgb.boot_effect", type: "e", label: "Effect at power-on",
       help: "Last used keeps the effect you chose last. Applies from the next start." },
     { key: "rgb.val_battery", type: "u", label: "Brightness cap without USB",
@@ -2274,6 +2274,10 @@ button.mv { padding: .1rem .5rem; }
       th.flush(C.parseColor(input.value));
       settle();
     });
+    input.addEventListener("blur", () => {
+      open = false;
+      settle();
+    });
     return {
       label: h("label", { for: id }, info.label),
       control: h("span", { class: "control" }, input, out),
@@ -2322,7 +2326,7 @@ button.mv { padding: .1rem .5rem; }
         const label = C.nameLabel(entry.key, r.name);
         const cbId = id + "-" + r.name;
         const cb = h("input", { type: "checkbox", id: cbId, "data-part": "cb", checked: r.checked,
-          disabled: r.checked && ticked === 1 });
+          disabled: r.checked && ticked === 1, "aria-describedby": cbId + "-help" });
         cb.addEventListener("change", () => {
           r.checked = cb.checked;
           commit();
@@ -2342,7 +2346,8 @@ button.mv { padding: .1rem .5rem; }
         });
         const li = h("li", { draggable: "true", "data-name": r.name },
           h("span", { class: "grip", "aria-hidden": "true" }, String.fromCharCode(0x2261)), cb,
-          h("label", { for: cbId }, label, h("span", { class: "help" }, " " + C.nameHelp(entry.key, r.name))),
+          h("span", { class: "txt" }, h("label", { for: cbId }, label),
+            h("span", { class: "help", id: cbId + "-help" }, " " + C.nameHelp(entry.key, r.name))),
           up, down);
         li.addEventListener("dragstart", (e) => {
           dragged = i;
@@ -2361,14 +2366,15 @@ button.mv { padding: .1rem .5rem; }
         });
         li.addEventListener("dragend", () => {
           dragged = null;
+          if (stale()) settle();
         });
         return li;
       }));
       if (focus) {
         const li = list.querySelector(`li[data-name="${focus[0]}"]`);
-        const el = li && li.querySelector(`[data-part="${focus[1]}"]`);
-        if (el && !el.disabled) el.focus();
-        else if (li) li.querySelector("input").focus();
+        const el = li && [focus[1], "up", "down", "cb"].map((p) => li.querySelector(`[data-part="${p}"]`))
+          .find((x) => x && !x.disabled);
+        if (el) el.focus();
       }
     }
 
@@ -2382,6 +2388,13 @@ button.mv { padding: .1rem .5rem; }
     function settle() {
       const v = me.model.values.get(entry.key);
       if (!busy() && v !== undefined) update(v);
+    }
+
+    /* The rows differ from what the keyboard has: an update came while the
+     * widget was busy. (Moving an unticked row changes no value: it stays.) */
+    function stale() {
+      const v = me.model.values.get(entry.key);
+      return v !== undefined && !C.sameValue(C.cycleFromRows(rows, v, known), v);
     }
 
     return {

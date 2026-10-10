@@ -2162,6 +2162,104 @@
     }
   });
 
+  uiTest("ui: a cycle checkbox is named by its effect and described by the help", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const cb = p.d.getElementById("set-rgb-cycle-plasma");
+      t.eq(cb.labels.length, 1);
+      t.eq(cb.labels[0].textContent, "Plasma", "the name is the effect only");
+      const help = p.d.getElementById(cb.getAttribute("aria-describedby"));
+      t.ok(help, "aria-describedby points to an element");
+      t.ok(!cb.labels[0].contains(help), "the help is not inside the label");
+      t.eq(help.textContent.trim(), C.nameHelp("rgb.cycle", "plasma"));
+      for (const c of p.d.querySelectorAll("#set-rgb-cycle li input")) {
+        t.ok(p.d.getElementById(c.getAttribute("aria-describedby")), "help for " + c.id);
+      }
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: focus stays on a control when the moved row loses a button", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      p.sim.values["rgb.cycle"] = ["wave"];
+      p.sim.rev++;
+      await until(() => p.d.getElementById("set-rgb-cycle-wave").disabled, 3000);
+      const part = (x) => p.d.querySelector(`#set-rgb-cycle li[data-name="wave"] [data-part="${x}"]`);
+      const where = () => [p.d.activeElement.closest("li").dataset.name, p.d.activeElement.dataset.part];
+      part("down").focus();
+      for (let i = 0; i < 11; i++) part("down").click();
+      t.ok(part("down").disabled && part("cb").disabled, "last row, only ticked: two disabled");
+      t.eq(where(), ["wave", "up"], "the other move button");
+      for (let i = 0; i < 11; i++) part("up").click();
+      t.ok(part("up").disabled && part("cb").disabled, "first row, only ticked: two disabled");
+      t.eq(where(), ["wave", "down"], "the other move button");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: an update that arrived during a drag shows after dragend", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const names = () => Array.from(p.d.querySelectorAll("#set-rgb-cycle li"), (li) => li.dataset.name);
+      const info = () => p.sim.requests.filter((r) => r.group === C.SMP.GROUP_CFG && r.cmd === 0).length;
+      const li = p.d.querySelector('#set-rgb-cycle li[data-name="comet"]');
+      li.dispatchEvent(new p.w.DragEvent("dragstart", { bubbles: true, dataTransfer: new p.w.DataTransfer() }));
+      const polls = info();
+      p.sim.values["rgb.cycle"] = ["wave", "rain"];
+      p.sim.rev++;
+      await sleep(1500);
+      t.ok(info() > polls, "the page polled during the drag");
+      t.eq(names()[0], "solid", "the update waits while dragging");
+      li.dispatchEvent(new p.w.DragEvent("dragend", { bubbles: true }));
+      await until(() => names().slice(0, 2).join() === "wave,rain");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: dropping an unticked effect elsewhere does not snap it back at dragend", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      p.sim.values["rgb.cycle"] = ["solid", "rainbow"];
+      p.sim.rev++;
+      await until(() => !p.d.getElementById("set-rgb-cycle-plasma").checked, 3000);
+      const names = () => Array.from(p.d.querySelectorAll("#set-rgb-cycle li"), (li) => li.dataset.name);
+      const li = (n) => p.d.querySelector(`#set-rgb-cycle li[data-name="${n}"]`);
+      const rain = li("rain");
+      const dt = new p.w.DataTransfer();
+      t.ok(names().indexOf("wave") < names().indexOf("rain"));
+      rain.dispatchEvent(new p.w.DragEvent("dragstart", { bubbles: true, dataTransfer: dt }));
+      li("wave").dispatchEvent(new p.w.DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
+      t.ok(names().indexOf("rain") < names().indexOf("wave"), "dropped before wave");
+      rain.dispatchEvent(new p.w.DragEvent("dragend", { bubbles: true }));
+      t.ok(names().indexOf("rain") < names().indexOf("wave"), "still there after dragend");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: a colour picker that loses focus without change is not left busy", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const c = p.d.getElementById("set-ind-caps-color");
+      c.value = "#ff8000";
+      fire(c, "input");
+      await until(() => p.sim.values["ind.caps_color"] === 0xff8000);
+      p.sim.values["ind.caps_color"] = 0x00ff00;
+      p.sim.rev++;
+      await sleep(1500);
+      t.eq(c.value, "#ff8000", "the update waits while the picker is open");
+      fire(c, "blur");
+      await until(() => c.value === "#00ff00");
+      t.eq(p.row("ind.caps_color").querySelector("output").textContent, "#00FF00");
+    } finally {
+      p.close();
+    }
+  });
+
   uiTest("ui: reset to defaults asks first", async (C, env) => {
     const p = await openDemo(env);
     try {
