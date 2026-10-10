@@ -1803,9 +1803,10 @@ button.mv { padding: .1rem .5rem; }
       show: (v) => (v === 0 ? "Never" : v + " min") },
     { key: "kb.sleep_on_usb", type: "b", label: "Sleep on USB",
       help: "Also sleep while a USB host is connected. Off: the keyboard stays awake on USB, also while " +
-        "the computer sleeps, so a key press can wake the computer; not while it types over Bluetooth, " +
-        "because a key press then goes to the Bluetooth host. If the computer put USB to sleep and the " +
-        "cable is then pulled, the keyboard may stay awake until the next USB event." },
+        "the computer sleeps, so a key press can wake the computer. It still sleeps while it types over " +
+        "Bluetooth to another device and the computer has had USB asleep for about a minute: a key press " +
+        "then goes to that device. If the computer put USB to sleep and the cable is then pulled, the " +
+        "keyboard may stay awake until a key is pressed with the output on USB, or it is plugged in again." },
   ];
 
   const EFFECTS = {

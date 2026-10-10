@@ -1170,6 +1170,9 @@
     t.ok(/USB to sleep/.test(help("rgb.val_battery")) && /USB to sleep/.test(help("ind.bat_low")));
     t.ok(/settings change/.test(help("kb.sleep_min")) && /open page/.test(help("kb.sleep_min")));
     t.ok(/Bluetooth/.test(help("kb.sleep_on_usb")) && /USB to sleep/.test(help("kb.sleep_on_usb")));
+    t.ok(/to another device/.test(help("kb.sleep_on_usb")) && /about a minute/.test(help("kb.sleep_on_usb")));
+    t.ok(/output on USB, or it is plugged in again/.test(help("kb.sleep_on_usb")) &&
+      !/next USB event/.test(help("kb.sleep_on_usb")));
     t.ok(/ZMK Studio/.test(C.OS_KEYS_WARNING));
   });
 
