@@ -135,13 +135,13 @@ LED reference is in [rainy-rgb.md](rainy-rgb.md#ble-slot-status-and-passkey-guid
 
 ### Waking up
 
-After 15 minutes without a keypress the keyboard sleeps, but not while a computer has it
-connected over USB (also while that computer sleeps, so a keypress can wake it; but a
-sleeping computer does not count while you type over Bluetooth, because a keypress then
-goes to the Bluetooth host). Press any key to wake it; it reconnects to the selected host
-within a few seconds (about 5 s measured). Both are settings: `kb.sleep_min` (the minutes,
-0 = never sleep) and `kb.sleep_on_usb` (sleep on USB too), see
-[config.md](config.md#keyboard).
+After 15 minutes without a keypress the keyboard sleeps. It stays awake while a computer
+has it connected over USB, also while that computer sleeps, so a keypress can wake it;
+it still sleeps while it types over Bluetooth to another device and the computer has had
+USB asleep for about a minute, because a keypress then goes to that device. Press any key
+to wake it; it reconnects to the selected host within a few seconds (about 5 s measured).
+Both are settings: `kb.sleep_min` (the minutes, 0 = never sleep) and `kb.sleep_on_usb`
+(sleep on USB too), see [config.md](config.md#keyboard).
 
 ## ZMK Studio (live keymap editing)
 

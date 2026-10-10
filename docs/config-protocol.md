@@ -60,8 +60,9 @@ behavior (`zmk/src/behaviors/behavior_os_key.c`, decisions in `zmk/src/os_key/`)
   board. `rgb.boot_effect` takes effect at the next boot, `rgb.cycle` at the next Fn+Enter.
   `kb.os` and `kb.gui_lock` apply from the next press of an `&os_key` key (a key held during
   the change releases what it pressed); they do not restart the idle timer.
-  Every `set` and `reset` (of any setting) also counts as activity for the sleep timer
-  (`kb.sleep_min`), like a key press; reads (`info`, `list`, `get`) do not.
+  Every accepted `set` and `reset` (of any setting) also counts as activity for the sleep
+  timer (`kb.sleep_min`), like a key press; refused ones (they do not change `rev`) and
+  reads (`info`, `list`, `get`) do not.
 - `reset` with keys checks all of them first (unknown: `ENOENT`, read-only:
   `EACCESSDENIED`) and resets none if one fails. Should resetting a checked key still fail
   (defaults are validated at boot, so this is not expected), the remaining keys are reset
@@ -189,14 +190,18 @@ read).
   checked once a second, so a change applies within a second), but not while a USB host is
   connected unless `kb.sleep_on_usb` is on. "USB host connected" is as for `rgb.val_battery`
   (a host that suspends the bus still counts, so a key press can wake it), with one
-  exception: while the bus is suspended and the keyboard types over Bluetooth, the USB host
-  does not keep it awake (a key press goes to the Bluetooth host and cannot wake the
-  computer). The exception needs the keyboard to have noticed the suspend, which some Linux
-  sleeps do not show. The known limit of `rgb.val_battery` applies otherwise: pulled from a
-  sleeping host, the keyboard can stay awake until the next USB event (with output USB the
-  next key presses end it). Any key wakes the keyboard with a cold boot (typing again after
-  about 5 s); every host connection ends with the sleep. Builds without the sleep trigger
-  (test images, the fallback to ZMK's own sleep) store both settings without effect.
+  exception: while the keyboard types over Bluetooth to another device and the computer has
+  had USB asleep for about a minute (bus suspended and output Bluetooth for more than 60 s
+  without a break), the USB host does not keep it awake (a key press goes to the Bluetooth
+  device and cannot wake the computer). The minute is for a Bluetooth link to the computer
+  that suspends USB: it drops within the supervision timeout (at most 32 s) and the output
+  falls back to USB, so a key press can still wake that computer. The exception needs the
+  keyboard to have noticed the suspend, which some Linux sleeps do not show. The known
+  limit of `rgb.val_battery` applies otherwise: pulled from a sleeping host, the keyboard
+  can stay awake until a key is pressed with the output on USB, or it is plugged in again.
+  Any key wakes the keyboard with a cold boot (typing again after about 5 s); every host
+  connection ends with the sleep. Builds without the sleep trigger (test images, the
+  fallback to ZMK's own sleep) store both settings without effect.
 
 ## Storage
 

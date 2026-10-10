@@ -219,15 +219,19 @@ Bluetooth it can persist.
 | `kb.gui_lock` (GUI key lock) | on, off | off | Silences the GUI key (Win, or Command on a Mac), for example while gaming. |
 | `kb.os_keys` (Keys following these settings) | 0 to 83, read-only | counted (2 with the default keymap) | How many keys use the OS Key behavior, counted from the live keymap. 0 means the left Win and Alt keys were rebound in ZMK Studio, so `kb.os` and `kb.gui_lock` change nothing; the page shows a warning then. Bind them to "OS Key" in Studio again and save, or use Restore Stock Settings there (it also drops your other saved Studio edits). |
 | `kb.sleep_min` (Sleep after) | 0 to 120 min | 15 | Minutes without a key press until the keyboard sleeps; 0 = never. A settings change (from the page, `rainy75_cfg.py` or the Fn keys) counts as a key press; an open page alone does not keep it awake. Not while a USB host is connected, unless `kb.sleep_on_usb` is on. Any key wakes it; typing works again after about 5 s. |
-| `kb.sleep_on_usb` (Sleep on USB) | on, off | off | Also sleep while a USB host is connected. Off: on USB the keyboard stays awake, also while the computer sleeps, so a key press can wake the computer; but not while it types over Bluetooth, because a key press then goes to the Bluetooth host. |
+| `kb.sleep_on_usb` (Sleep on USB) | on, off | off | Also sleep while a USB host is connected. Off: on USB the keyboard stays awake, also while the computer sleeps, so a key press can wake the computer; but it still sleeps while it types over Bluetooth to another device and the computer has had USB asleep for about a minute, because a key press then goes to that device. |
 
 Sleep and USB: "USB host connected" means the same as for the brightness cap above, with
-the same known limit: pulled from a sleeping computer, the keyboard can stay awake until
-the next USB event (with output USB the next key presses end it). One difference: with
-output Bluetooth, a computer that has put USB to sleep does not keep the keyboard awake (a
-key press goes to the Bluetooth host and could not wake the computer anyway), so it sleeps
-then, as long as it noticed that the computer put USB to sleep (some Linux sleeps do not
-show it). A computer that is awake keeps it awake whatever the output. Test images
+the same known limit: pulled from a sleeping computer, the keyboard can stay awake until a
+key is pressed with the output on USB, or it is plugged in again. One difference: while
+the keyboard types over Bluetooth to another device and the computer has had USB asleep
+for about a minute, the computer does not keep the keyboard awake (a key press goes to the
+other device and could not wake the computer anyway), so it sleeps then, if the keyboard
+noticed that the computer put USB to sleep (some Linux sleeps do not show it). The minute
+is for a Bluetooth link to the same computer: when that computer sleeps, the link drops
+within at most 32 s and the output goes back to USB, so the keyboard stays awake and a key
+press can wake the computer. A computer that is awake keeps it awake whatever the output,
+unless it suspends the keyboard's USB port to save power (USB autosuspend). Test images
 ([CONTRIBUTING.md](../CONTRIBUTING.md#testing--verification)) never sleep; they keep both
 settings without effect.
 
