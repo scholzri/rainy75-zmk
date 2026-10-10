@@ -418,6 +418,7 @@ static int cfg_mgmt_reset(struct smp_streamer *ctxt) {
     struct zcbor_map_decode_key_val map[] = {
         ZCBOR_MAP_DECODE_KEY_DECODER("k", decode_keys, &kl),
     };
+    int first = 0; /* the first cfg_reset() error; the others are still reset */
     bool ok;
 
     if (zcbor_map_decode_bulk(zsd, map, ARRAY_SIZE(map), &decoded) != 0) {
@@ -437,16 +438,23 @@ static int cfg_mgmt_reset(struct smp_streamer *ctxt) {
             ids[j] = x;
         }
         for (uint8_t j = 0; j < kl.n; j++) {
-            (void)cfg_reset(ids[j]);
+            int rc = cfg_reset(ids[j]);
+
+            first = (first == 0) ? rc : first;
         }
     } else {
         for (uint8_t i = 0; i < cfg_count(); i++) {
             if (!(cfg_def(i)->flags & CFG_F_RO)) {
-                (void)cfg_reset(i);
+                int rc = cfg_reset(i);
+
+                first = (first == 0) ? rc : first;
             }
         }
     }
     cfg_store_request_save();
+    if (first != 0) {
+        return to_mgmt(first);
+    }
     ok = zcbor_tstr_put_lit(zse, "rc") && zcbor_int32_put(zse, 0);
     return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
 }

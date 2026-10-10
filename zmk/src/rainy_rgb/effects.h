@@ -12,6 +12,10 @@ struct rgb_frame {
     uint32_t tick;            /* monotonic frame counter (age-based reactive timing) */
     uint32_t phase;           /* FPS-independent animation phase (ambient effects) */
     uint8_t hue, sat, val;    /* global params 0..255 */
+    /* Brightness an effect may exceed val up to (the reactive flash): 255
+     * with the battery cap and idle dim applied (rrgb_render_val). Every
+     * other effect stays at or below val. */
+    uint8_t val_max;
     uint8_t speed;            /* 1..255 */
     const struct led_xy *xy;  /* spatial map [n] or NULL */
     uint32_t last_press_tick; /* tick of most recent keypress (for reactive) */

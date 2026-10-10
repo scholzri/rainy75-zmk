@@ -103,7 +103,7 @@ config RGB_MGMT_HOST_TIMEOUT_S
 	help
 	  Host mode is released by an explicit clear command, so a host that
 	  dies without sending one leaves the board displaying its last frame
-	  forever: the idle blank cannot help (host mode deliberately overrides
+	  forever: the idle timer cannot help (host mode deliberately overrides
 	  it) and on battery nothing else intervenes. Undocking mid-animation
 	  does exactly this — the link dies before the host can retract the
 	  frame, and there is then no host left to send anything.
@@ -150,15 +150,3 @@ config RAINY_RGB_WALKER
 	  ISO/ANSI pos_to_led map, so it works on either board and is how the
 	  ANSI map was ground-truthed. Off by default — enable only when
 	  calibrating or debugging the LED order.
-
-config RAINY_RGB_IDLE_BLANK
-	bool "Blank LEDs on activity idle (power saving)"
-	depends on RAINY_RGB
-	default n
-	help
-	  Turn the per-key LEDs off after CONFIG_ZMK_IDLE_TIMEOUT of no
-	  activity (typing / pointing) and restore them on the first keypress,
-	  while the keyboard is still awake — before deep sleep. Saves power on
-	  wireless during idle-but-awake stretches. Host direct mode (rgb_mgmt)
-	  overrides the blank so a host notification pulse still shows when the
-	  board is idle. Off by default (no behaviour change).

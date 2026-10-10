@@ -10,6 +10,7 @@
 #include "reactive.h"
 #include "zmk_adapter.h"
 #include "overlay.h"
+#include "lighting.h"
 
 LOG_MODULE_REGISTER(rrgb_engine, CONFIG_LOG_DEFAULT_LEVEL);
 
@@ -47,7 +48,7 @@ LOG_MODULE_REGISTER(rrgb_engine, CONFIG_LOG_DEFAULT_LEVEL);
 
 /* --- Black-box instrumentation (B91_DIAG_RGB_STATE) ---------------------
  * Chasing a dark-strip episode where the firmware was healthy, SMP answered,
- * host-mode frames were accepted (which overrides the idle blank) and the DMA
+ * host-mode frames were accepted (which overrides idle off) and the DMA
  * never reported a timeout — yet nothing lit, and only a USB resume restored
  * it.  That combination points at the LED rail being low while the render loop
  * believed it high: `rail_on` is loop-local state, so anything that drops PC2
@@ -115,10 +116,6 @@ static inline uint32_t rrgb_speed_increment(uint8_t speed) {
 
 struct rrgb_runtime {
     bool on;
-    /* Activity-idle blank (CONFIG_RAINY_RGB_IDLE_BLANK); never persisted.
-     * Written from the ZMK event thread, read by the render thread — volatile
-     * without locking, same pattern as host_mode below. */
-    volatile bool idle;
     uint8_t effect;
     uint8_t hue, sat, val, speed;
     uint32_t tick;
@@ -134,6 +131,19 @@ static uint32_t anim_phase_q8;   /* .8 fixed-point animation phase accumulator *
  * an automatic BLE animation (connecting / switching / pairing, see
  * rrgb_overlay_suppress_effect), back to 255 after. */
 static uint8_t effect_gain = 255;
+
+/* Lighting settings (rrgb_set_*; config/cfg_table.c pushes them, these are
+ * the defaults). Written from the mcumgr work queue, the system work queue
+ * or the ZMK main thread, read by the render thread: single bytes and
+ * aligned words, volatile without locking like host_mode below (a pair
+ * changed together can be torn for one frame). */
+static volatile uint8_t val_battery = 255;  /* rgb.val_battery: cap without a USB host */
+static volatile uint16_t idle_s;            /* rgb.idle_s, 0 = never */
+static volatile uint8_t idle_mode;          /* rgb.idle_mode, enum rrgb_idle_mode */
+static volatile bool usb_host;              /* zmk_usb_is_hid_ready(), zmk_adapter.c */
+/* Idle timer origin: k_uptime_get_32() of the last key position event or
+ * settings change. */
+static volatile uint32_t last_activity_ms;
 
 /* Render-loop liveness beat (see rrgb_heartbeat). Written by the render thread,
  * read from the mcumgr (SMP) thread; a 32-bit aligned load is atomic on this
@@ -181,12 +191,24 @@ void rrgb_set_persist(const struct rrgb_persist *in) {
 K_THREAD_STACK_DEFINE(rrgb_stack, RRGB_STACK);
 static struct k_thread rrgb_thread;
 
-static void render_once(void) {
+static void render_once(enum rrgb_idle_state idle) {
+    /* idle "off": the effect layer is off, the overlays still show */
+    bool effect_on = rt.on && idle != RRGB_IDLE_DARK;
+    /* CapsLock tint strength: the brightness the effect is drawn at (its
+     * rendered value times the gain), 0 while it is not drawn */
+    uint8_t tint_v = 0;
+
     rrgb_reactive_tick(rt.tick);
     anim_phase_q8 += rrgb_speed_increment(rt.speed);
     struct rgb_frame f = {
         .px = pixels, .n = RRGB_N, .tick = rt.tick, .phase = anim_phase_q8 >> 8,
-        .hue = rt.hue, .sat = rt.sat, .val = rt.val, .speed = rt.speed,
+        .hue = rt.hue, .sat = rt.sat,
+        /* rgb.val, capped without a USB host (rgb.val_battery), a quarter of
+         * that while idle "dim" */
+        .val = rrgb_render_val(rt.val, val_battery, usb_host, idle),
+        /* the same limits for the reactive flash: 255 at the defaults */
+        .val_max = rrgb_render_val(255, val_battery, usb_host, idle),
+        .speed = rt.speed,
         .xy = rrgb_led_xy, .last_press_tick = rt.last_press_tick,
         .ripples = rrgb_ripples(),
         .ripple_count = rrgb_ripple_pool_size(),
@@ -196,12 +218,13 @@ static void render_once(void) {
      * shows only the BLE status and the other overlays. Host direct mode is
      * not affected: an explicit host frame, not the normal effect. */
     effect_gain = rrgb_effect_gain_frame(effect_gain,
-                                         rrgb_overlay_suppress_effect(rt.tick), rt.on);
+                                         rrgb_overlay_suppress_effect(rt.tick), effect_on);
     if (host_mode) {
         /* Host direct mode: the host's buffer replaces the effect layer. */
         for (uint16_t i = 0; i < RRGB_N; i++) { pixels[i] = host_px[i]; }
-    } else if (rt.on && effect_gain > 0) {
+    } else if (effect_on && effect_gain > 0) {
         rrgb_effects[rt.effect].render(&f);
+        tint_v = scale8(f.val, effect_gain);
         if (effect_gain < 255) {
             for (uint16_t i = 0; i < RRGB_N; i++) {
                 pixels[i].r = scale8(pixels[i].r, effect_gain);
@@ -209,12 +232,15 @@ static void render_once(void) {
                 pixels[i].b = scale8(pixels[i].b, effect_gain);
             }
         }
+        /* ind.bat_low: Esc pulses red on top of the effect, only while the
+         * effect is drawn */
+        rrgb_overlay_bat_low_render(pixels, RRGB_N, rt.tick, usb_host);
     } else {
-        /* RGB toggled off or effect suppressed: black base so functional
-         * overlays still show. */
+        /* RGB toggled off, idle off or effect suppressed: black base so
+         * functional overlays still show. */
         for (uint16_t i = 0; i < RRGB_N; i++) { pixels[i] = (struct rrgb){0, 0, 0}; }
     }
-    rrgb_overlay_render(pixels, RRGB_N, rt.tick);
+    rrgb_overlay_render(pixels, RRGB_N, rt.tick, tint_v);
     rrgb_strip_show(pixels, RRGB_N);
     rt.tick++;
 }
@@ -232,15 +258,15 @@ static void rrgb_loop(void *a, void *b, void *c) {
     for (;;) {
         /* Liveness beat — deliberately NOT rt.tick, which only advances inside
          * render_once() and so freezes whenever the strip is legitimately dark
-         * (idle blank, RGB off). This counter advances once per iteration, so a
+         * (idle off, RGB off). This counter advances once per iteration, so a
          * caller can tell "thread is gone" from "thread is fine, nothing to
          * draw" — the two states the dark-strip bug made indistinguishable. */
         loop_beat++;
 
         /* Host-mode watchdog. Host mode is normally released by an explicit
          * clear, so a host that dies without sending one strands the board on
-         * its last frame indefinitely — the idle blank cannot rescue it (host
-         * mode overrides the blank by design) and on battery nothing else will.
+         * its last frame indefinitely; idle off cannot rescue it (host mode
+         * overrides it by design) and on battery nothing else will.
          * Undocking mid-animation is the case that bites: the link dies before
          * the host can retract the frame, and afterwards there is no host left
          * to send anything at all. Host animations refresh continuously, so a
@@ -276,18 +302,29 @@ static void rrgb_loop(void *a, void *b, void *c) {
          * to hold a steady RRGB_FPS regardless of render duration. */
         int64_t deadline = k_uptime_get() + RRGB_PERIOD_MS;
 
-        /* Render when the effect is on OR a functional overlay (caps / Fn-highlight
-         * / battery gauge) needs to show — so indicators work even with RGB off.
-         * With CONFIG_RAINY_RGB_IDLE_BLANK, activity-idle also blanks the strip
-         * (first keypress restores it); host direct mode overrides the blank so a
-         * host notification pulse still shows when the board is idle. When the
-         * option is off, IS_ENABLED() folds idle_off to false — identical behaviour. */
-        bool idle_off = IS_ENABLED(CONFIG_RAINY_RGB_IDLE_BLANK) && rt.idle && !host_mode;
+        /* Idle timer (rgb.idle_s / rgb.idle_mode). The writers (settings
+         * path, key events) run above this thread, so they only come in
+         * between two of these reads. The settings are read BEFORE
+         * last_activity_ms: a change (timeout, then a new timestamp) is then
+         * never seen as the new timeout with the old timestamp. The
+         * timestamp is read BEFORE the clock, so a key stamped in between is
+         * never newer than now. Either would read as idle and turn the
+         * effect off for one frame. */
+        uint16_t timeout_s = idle_s;
+        uint8_t mode = idle_mode;
+        uint32_t last = last_activity_ms;
+        enum rrgb_idle_state idle = rrgb_idle_state(k_uptime_get_32(), last, timeout_s, mode);
+        /* Render when the effect shows OR a functional overlay (caps / Fn-highlight
+         * / battery gauge / BLE status) needs to show, so indicators work with RGB
+         * off and while idle. Idle "off" turns only the effect off (the first
+         * keypress restores it); host direct mode overrides it so a host
+         * notification pulse still shows when the board is idle. */
+        bool idle_off = idle == RRGB_IDLE_DARK && !host_mode;
 
         /* Black box: what we believe vs what the pin says (see above). */
-        uint8_t rail = rrgb_diag_state(rail_on, rt.idle, host_mode, rt.on);
+        uint8_t rail = rrgb_diag_state(rail_on, idle_off, host_mode, rt.on);
 
-        if (!idle_off && (rt.on || host_mode || rrgb_overlay_active(rt.tick))) {
+        if ((rt.on && !idle_off) || host_mode || rrgb_overlay_active(rt.tick)) {
             if (!rail_on) {
                 rrgb_strip_power(true);
                 rail_on = true;
@@ -317,7 +354,7 @@ static void rrgb_loop(void *a, void *b, void *c) {
                 rrgb_strip_power(true);
                 k_msleep(RRGB_RAIL_SETTLE_MS);
             }
-            render_once();
+            render_once(idle);
             was_lit = true;
             dark_ticks = 0;
         } else {
@@ -359,6 +396,10 @@ static bool host_mode_escape(void) {
 
 __weak void rrgb_state_changed_hook(void) {}
 
+__weak uint8_t rrgb_cycle_next_hook(uint8_t cur) {
+    return (uint8_t)((cur + 1) % rrgb_effect_count);
+}
+
 /* Every change of the persisted state: save it and tell the settings. */
 static void state_changed(void) {
     rrgb_request_save();
@@ -373,7 +414,9 @@ void rrgb_toggle(void) {
 }
 void rrgb_next_effect(void) {
     if (host_mode_escape()) { return; }
-    rt.effect = (rt.effect + 1) % rrgb_effect_count;
+    uint8_t next = rrgb_cycle_next_hook(rt.effect);   /* rgb.cycle */
+
+    rt.effect = (next < rrgb_effect_count) ? next : 0;
     LOG_INF("effect %u (%s)", rt.effect, rrgb_effects[rt.effect].name);
     state_changed();
 }
@@ -420,6 +463,7 @@ void rrgb_param_set(uint8_t p, uint32_t v) {
     default: return;
     }
     host_mode = false;   /* a setting from a host shows the effect again */
+    rrgb_note_activity(); /* also on an idle board */
     state_changed();
 }
 
@@ -485,15 +529,24 @@ uint32_t rrgb_stack_unused(void) {
 #endif
 }
 
-/* Activity-idle hook (CONFIG_RAINY_RGB_IDLE_BLANK). Fed by the ZMK
- * activity_state_changed event; the render loop blanks while idle. */
-void rrgb_set_idle(bool idle) {
-    if (rt.idle != idle) {
-        rt.idle = idle;
-        LOG_INF("rgb %s (activity)", idle ? "idle-off" : "resume");
+void rrgb_set_val_battery(uint8_t cap) { val_battery = cap; }
+
+void rrgb_set_idle_timeout(uint16_t seconds, uint8_t mode) {
+    idle_s = seconds;
+    idle_mode = mode;
+}
+
+void rrgb_note_activity(void) { last_activity_ms = k_uptime_get_32(); }
+
+void rrgb_set_usb_host(bool host) {
+    if (usb_host != host) {
+        usb_host = host;
+        LOG_INF("usb host %s", host ? "connected" : "gone");
     }
 }
+
 void rrgb_on_key(uint32_t position, bool pressed) {
+    rrgb_note_activity();   /* every key position event restarts the idle timer */
     /* Fn-layer presses (BT slot, output, media, RGB controls) and presses
      * while the effect is suppressed for BLE (passkey digits) leave no
      * reactive trace: see rrgb_overlay_key_reactive(). */

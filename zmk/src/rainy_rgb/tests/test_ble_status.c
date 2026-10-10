@@ -1004,6 +1004,48 @@ static void test_wraparound(void) {
 	CHECK(!frame(0x7FFFFFF0u));
 }
 
+/* ind.passkey_guide off: the number row and Enter stay untouched through a
+ * whole passkey pairing, the slot keys keep their status. */
+static void test_passkey_guide_off(void) {
+	reset();
+	rrgb_ble_set_passkey_guide(false);
+	uint32_t t0 = 30000;
+	slots(RRGB_BLE_CONNECTED, RRGB_BLE_EMPTY, RRGB_BLE_EMPTY, 1, t0 - 2000);
+	slots(RRGB_BLE_CONNECTED, RRGB_BLE_CONNECTED, RRGB_BLE_EMPTY, 1, t0 - 1000);
+	rrgb_ble_event(RRGB_BLE_EV_PASSKEY_REQ, 1, 0, t0);
+	rrgb_ble_event(RRGB_BLE_EV_PASSKEY_DIGITS, 1, 3, t0 + 10);
+	CHECK(!rrgb_ble_active(t0 + 10));            /* nothing else to show */
+	CHECK(!rrgb_ble_suppress_effect(t0 + 10));   /* the effect stays on */
+	CHECK(!frame(t0 + 10));
+	CHECK(eq(px[NUM(0)], SENT) && eq(px[ENTER], SENT));
+
+	/* Enter: no chase on 1..6, the slot blinks (slot status) */
+	rrgb_ble_event(RRGB_BLE_EV_PASSKEY_SUBMITTED, 1, 6, t0 + 20);
+	CHECK(rrgb_ble_active(t0 + 20));
+	CHECK(rrgb_ble_suppress_effect(t0 + 20));   /* the effect stays off while it blinks */
+	CHECK(slot_blinks(1, t0 + 20));
+	for (int k = 0; k < RRGB_BLE_PASSKEY_LEN; k++) { CHECK(eq(px[NUM(k)], SENT)); }
+
+	/* wrong code: the slot flashes red, keys 1..6 do not */
+	rrgb_ble_event(RRGB_BLE_EV_FAILED, 1, 0, t0 + 40);
+	frame(t0 + 40);
+	CHECK(eq(px[F(1)], red(RRGB_BLE_BRIGHT)));
+	CHECK(eq(px[NUM(0)], SENT));
+
+	/* switched on during a new request: shown at once */
+	rrgb_ble_event(RRGB_BLE_EV_PASSKEY_REQ, 1, 0, t0 + 100);
+	rrgb_ble_set_passkey_guide(true);
+	frame(t0 + 100);
+	CHECK(eq(px[NUM(0)], white(RRGB_BLE_DIM)));
+
+	/* a setting, not state: rrgb_ble_init() keeps it */
+	rrgb_ble_set_passkey_guide(false);
+	reset();
+	rrgb_ble_event(RRGB_BLE_EV_PASSKEY_REQ, 0, 0, QUIET);
+	CHECK(!frame(QUIET));
+	rrgb_ble_set_passkey_guide(true);
+}
+
 int main(void) {
 	test_timing_constants();
 	test_idle();
@@ -1016,6 +1058,7 @@ int main(void) {
 	test_red_flash();
 	test_passkey();
 	test_verifying();
+	test_passkey_guide_off();
 	test_just_works();
 	test_verify_review();
 	test_digit_flash_once();

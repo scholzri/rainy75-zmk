@@ -7,7 +7,8 @@ Bluetooth (SMP GATT service `8d53dc1d-1db7-4cd3-868b-8a527460aa84`, characterist
 config page.
 
 Firmware: `zmk/src/config/` (registry `cfg_registry.c`, table `cfg_table.c`, storage
-`cfg_store.c`, this protocol `cfg_mgmt.c`), enabled with `CONFIG_RAINY75_CONFIG`.
+`cfg_store.c` with its stored form in `cfg_codec.c`, this protocol `cfg_mgmt.c`), enabled
+with `CONFIG_RAINY75_CONFIG`.
 
 ## Commands
 
@@ -47,10 +48,14 @@ Firmware: `zmk/src/config/` (registry `cfg_registry.c`, table `cfg_table.c`, sto
 - `set` applies immediately; storage is written 2 s after the last change. A `set` or
   `reset` of any setting that lives in the rainy_rgb state record (`rgb.on`, `rgb.effect`,
   `rgb.hue`, `rgb.sat`, `rgb.val`, `rgb.speed`) leaves host pixel mode (group 65 direct
-  mode), so the new value is visible; `rgb.boot_effect` only takes effect at the next boot
-  and does not.
+  mode), so the new value is visible; the other settings do not. Those six and the
+  lighting and indicator settings (`rgb.val_battery`, `rgb.idle_s`, `rgb.idle_mode`,
+  `ind.*`) also restart the lighting idle timer (`rgb.idle_s`), so a change shows on an idle
+  board. `rgb.boot_effect` takes effect at the next boot, `rgb.cycle` at the next Fn+Enter.
 - `reset` with keys checks all of them first (unknown: `ENOENT`, read-only:
-  `EACCESSDENIED`) and resets none if one fails.
+  `EACCESSDENIED`) and resets none if one fails. Should resetting a checked key still fail
+  (defaults are validated at boot, so this is not expected), the remaining keys are reset
+  and saved anyway and the reply carries the first error.
 
 ## Types
 
@@ -62,8 +67,9 @@ Firmware: `zmk/src/config/` (registry `cfg_registry.c`, table `cfg_table.c`, sto
 | `c` | CBOR unsigned `0xRRGGBB` | null | null |
 | `l` | CBOR list of texts, a subset of `a` in order | list of names | null |
 
-`l`: the order is the client's order (kept as sent); duplicates are dropped, the first one
-kept, and `set` echoes the result.
+`l`: at most 16 entries; a longer request is refused with `EINVAL`, even if it contains
+duplicates. The order is the client's order (kept as sent); duplicates are dropped within
+those 16, the first one kept, and `set` echoes the result.
 
 `flags`: bit 0 = read-only; the other bits are reserved, clients ignore them. Names are
 identifiers, not display text; clients own labels.
@@ -95,15 +101,68 @@ read).
 | `rgb.val` | u | 16..255 | 200 | rainy_rgb state record |
 | `rgb.speed` | u | 1..255 | 32 | rainy_rgb state record |
 | `rgb.boot_effect` | e | `last` + the effects | `last` | `rainy_cfg/rgb.boot_effect` |
+| `rgb.cycle` | l | the effects of `fx` | all effects in table order | `rainy_cfg/rgb.cycle` |
+| `rgb.val_battery` | u | 16..255 | 255 (no cap) | `rainy_cfg/rgb.val_battery` |
+| `rgb.idle_s` | u | 0..3600 (0 = never) | 0 | `rainy_cfg/rgb.idle_s` |
+| `rgb.idle_mode` | e | `off`, `dim` | `off` | `rainy_cfg/rgb.idle_mode` |
+| `ind.caps_style` | e | `key`, `tint`, `off` | `key` | `rainy_cfg/ind.caps_style` |
+| `ind.caps_color` | c | | `0xFFFFFF` | `rainy_cfg/ind.caps_color` |
+| `ind.fn_highlight` | b | | on | `rainy_cfg/ind.fn_highlight` |
+| `ind.passkey_guide` | b | | on | `rainy_cfg/ind.passkey_guide` |
+| `ind.bat_low` | u | 0..50 (%, 0 = off) | 0 | `rainy_cfg/ind.bat_low` |
 
-`rgb.boot_effect`: the effect shown after power-on; `last` keeps the effect last chosen.
+- `rgb.boot_effect`: the effect shown after power-on; `last` keeps the effect last chosen.
+  A fixed boot effect is shown without being saved, so switching back to `last` brings
+  back the last saved effect (the one before the boot effect) unless something saved the
+  lighting since (for example an RGB Fn key).
+- `rgb.cycle`: the effects Fn+Enter steps through, in this order: the entry after the
+  current effect (wrapping), or the first entry when the current effect is not listed. An
+  empty list (`[]`) means all effects in table order. `set` refuses names this firmware does
+  not have; when loading, they are skipped (a list of only unknown names loads as empty).
+- `rgb.val_battery`: while no USB host is connected the effect renders at
+  `min(rgb.val, rgb.val_battery)`; `rgb.val` itself does not change. "USB host connected"
+  means a host has configured the keyboard (ZMK `zmk_usb_is_hid_ready()`), but with
+  output Bluetooth a suspended USB bus counts as no host. The board cannot sense the cable
+  (no VBUS pin), and a pull may arrive as a plain bus suspend: with output Bluetooth the cap
+  applies within about a second, with output USB at the first keypress after the pull
+  (about 3 to 4 s after it at the earliest). A PC asleep with output Bluetooth also counts
+  as no host, so the board dims while it sleeps.
+- `rgb.idle_s` / `rgb.idle_mode`: after `rgb.idle_s` seconds without a key event, the
+  effect turns off (`off`) or renders at a quarter of its brightness (`dim`); the next key
+  brings it back. The indicators (CapsLock, Fn highlight, battery gauge, Bluetooth status,
+  passkey guide) keep showing, the CapsLock `tint` only with `dim`; host pixel mode is not
+  affected.
+- `ind.caps_style` / `ind.caps_color`: with CapsLock on, `key` lights the CapsLock key in
+  the colour at full strength, `tint` mixes every LED 50/50 with the colour scaled to the
+  brightness the effect is drawn at (after `rgb.val_battery`, idle `dim` and the fade during
+  a Bluetooth animation), `off` shows nothing. The tint does not show while the Fn highlight
+  does (Fn held, `ind.fn_highlight` on) or while the effect is not drawn (RGB off, idle
+  `off`, a Bluetooth animation, host pixel mode).
+- `ind.fn_highlight`: while the Fn layer is held, keys whose Fn-layer binding is not
+  transparent light white and the rest go dark; off leaves the lighting as it is (F1..F4
+  still show the Bluetooth slots). The keys come from the live keymap, so they follow ZMK
+  Studio changes.
+- `ind.passkey_guide`: off hides the number-row passkey guidance (digits, Enter pulse,
+  verify chase, red digit flash); the F1..F4 slot status stays. With it off, nothing on the
+  keyboard reacts to a passkey request until Enter is pressed, so the host's pairing dialog
+  is the only cue that digits are expected. After Enter the slot being verified still
+  blinks and the effect stays off until the pairing ends.
+- `ind.bat_low`: while no USB host is connected (as for `rgb.val_battery`, with the same
+  cable pull and sleep rules) and the battery level is below this percentage, Esc pulses
+  red (2 s period) on top of the effect; 0 = off. It shows only while the effect is drawn
+  (RGB on, not idle `off`, not host pixel mode, not during a Bluetooth animation), and a
+  battery level of 0 (no reading yet) never pulses.
 
 ## Storage
 
 Settings that are not part of the rainy_rgb state record are stored one entry per key under
 the settings subtree `rainy_cfg`: bool, uint and colour as 4-byte little-endian, enum as its
-name, list as names joined with `,`. A stored name the firmware does not know is ignored
-(enum: default kept; list: name skipped).
+name, list as names joined with `,`, and an empty list as a single `,` (an entry of length 0
+would be a deletion and load as the default). A stored name the firmware does not know is
+ignored (enum: default kept; list: name skipped). A setting at its default has no entry:
+saving it deletes the entry, so `reset` deletes, and a later firmware with a different
+default applies its new default. A failed save is retried up to 3 times, 10 s apart, then
+logged.
 
 ## Compatibility rules
 

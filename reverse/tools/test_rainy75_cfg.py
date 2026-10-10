@@ -31,6 +31,13 @@ class Cbor(unittest.TestCase):
         self.assertEqual(c.cbor(["a", "b"]), b"\x82\x61a\x61b")
         self.assertEqual(c.cbor([]), b"\x80")
 
+    def test_long_list(self):
+        self.assertEqual(c.cbor(["a"] * 23)[:1], b"\x97")
+        self.assertEqual(c.cbor(["a"] * 24)[:2], b"\x98\x18")
+        self.assertEqual(c.cbor(["a"] * 32)[:2], b"\x98\x20")
+        with self.assertRaises(ValueError):
+            c.cbor(["a"] * 256)
+
 
 class ParseValue(unittest.TestCase):
     def test_bool(self):
@@ -61,12 +68,27 @@ class ParseValue(unittest.TestCase):
         with self.assertRaises(ValueError):
             c.parse_value(ENTRIES["ind.caps_color"], "#1000000")
 
+    def test_colour_needs_six_hex_digits(self):
+        self.assertEqual(c.parse_value(ENTRIES["ind.caps_color"], "FF8000"), 0xFF8000)
+        for bad in ("#FFF", "FFF", "#FF80001", "0x123", "GG0000", ""):
+            with self.assertRaises(ValueError, msg=bad):
+                c.parse_value(ENTRIES["ind.caps_color"], bad)
+
     def test_list(self):
         self.assertEqual(c.parse_value(ENTRIES["rgb.cycle"], "plasma,solid"),
                          ["plasma", "solid"])
         self.assertEqual(c.parse_value(ENTRIES["rgb.cycle"], ""), [])
         with self.assertRaises(ValueError):
             c.parse_value(ENTRIES["rgb.cycle"], "solid,fire")
+
+    def test_list_duplicates(self):
+        # dropped before sending, the first one kept: the keyboard refuses
+        # more than 16 entries even when duplicates would shrink them
+        self.assertEqual(c.parse_value(ENTRIES["rgb.cycle"], "plasma,solid,plasma"),
+                         ["plasma", "solid"])
+        names = [f"fx{i}" for i in range(16)]
+        entry = ["rgb.cycle", "l", names, None, 0]
+        self.assertEqual(c.parse_value(entry, ",".join(names + names[:4])), names)
 
 
 class Format(unittest.TestCase):
@@ -141,9 +163,12 @@ class Run(unittest.TestCase):
             (c.READ, c.CMD_LIST, 0): {"rc": 0, "s": list(ENTRIES.values())},
             (c.WRITE, c.CMD_SET, 0): {"rc": 0, "v": "plasma"},
         })
-        c.run(link, argparse.Namespace(cmd="set", key="rgb.effect", value="plasma"))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            c.run(link, argparse.Namespace(cmd="set", key="rgb.effect", value="plasma"))
         self.assertEqual(link.sent[-1], (c.WRITE, c.CMD_SET,
                                          [("k", "rgb.effect"), ("v", "plasma")]))
+        self.assertEqual(out.getvalue().split(), ["rgb.effect", "plasma"])
 
     def test_set_unknown_key_refused_locally(self):
         link = FakeLink({(c.READ, c.CMD_LIST, 0): {"rc": 0, "s": list(ENTRIES.values())}})
@@ -152,8 +177,11 @@ class Run(unittest.TestCase):
 
     def test_reset_all_sends_empty_request(self):
         link = FakeLink({(c.WRITE, c.CMD_RESET, 0): {"rc": 0}})
-        c.run(link, argparse.Namespace(cmd="reset", keys=[]))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            c.run(link, argparse.Namespace(cmd="reset", keys=[]))
         self.assertEqual(link.sent, [(c.WRITE, c.CMD_RESET, [])])
+        self.assertEqual(out.getvalue().strip(), "reset all settings")
 
     def test_device_error_names_rc(self):
         self.assertIn("unknown setting", str(c.DeviceError(5)))
@@ -189,6 +217,49 @@ class FakeKb:
 
     async def disconnect(self):
         raise self.exc
+
+
+class FakeKbConnect:
+    """connect() fails after the link came up (start_notify); records the cleanup."""
+
+    def __init__(self, disconnect_exc=None):
+        self.disconnected = False
+        self.disconnect_exc = disconnect_exc
+
+    async def connect(self):
+        raise FakeBleakError("start_notify failed")
+
+    async def disconnect(self):
+        self.disconnected = True
+        if self.disconnect_exc:
+            raise self.disconnect_exc
+
+
+class FakeDBusError(FakeBleakError):
+    """Like bleak's BleakDBusError: args (dbus_error, *body) and its own __str__."""
+
+    def __str__(self):
+        return f"[{self.args[0]}] {self.args[1]} (Write Not Permitted)"
+
+
+class BleakText(unittest.TestCase):
+    def test_own_str_is_kept(self):
+        e = FakeDBusError("org.bluez.Error.Failed", "ATT error: 0x03")
+        self.assertEqual(c._bleak_text(e),
+                         "[org.bluez.Error.Failed] ATT error: 0x03 (Write Not Permitted)")
+
+    def test_code_and_text_gives_the_text(self):
+        e = FakeBleakError(3, "GATT Protocol Error: Write Not Permitted")
+        self.assertEqual(c._bleak_text(e), "GATT Protocol Error: Write Not Permitted")
+
+    def test_text_and_reason_gives_the_text(self):
+        # BleakBluetoothNotAvailableError(msg, reason): reason is an enum, not a str
+        self.assertEqual(c._bleak_text(FakeBleakError("Bluetooth is off", object())),
+                         "Bluetooth is off")
+
+    def test_plain_and_empty(self):
+        self.assertEqual(c._bleak_text(FakeBleakError("Not connected")), "Not connected")
+        self.assertEqual(c._bleak_text(FakeBleakError()), "Bluetooth error")
 
 
 class BleErrors(unittest.TestCase):
@@ -227,6 +298,35 @@ class BleErrors(unittest.TestCase):
         link = self.link(FakeBleakError("gone"))
         with self.assertRaises(RuntimeError):
             link.close()
+        self.assertTrue(link.loop.is_closed())
+
+    def test_gatt_protocol_error_is_one_line(self):
+        # bleak's BleakGATTProtocolError(code) carries (code, text) in args
+        with self.assertRaises(RuntimeError) as cm:
+            self.link(FakeBleakError(3, "GATT Protocol Error: Write Not Permitted")).request(
+                c.READ, c.CMD_INFO, [])
+        self.assertEqual(str(cm.exception), "GATT Protocol Error: Write Not Permitted")
+
+    def test_failed_connect_disconnects_and_closes_the_loop(self):
+        link = object.__new__(c.BleLink)
+        link.loop = asyncio.new_event_loop()
+        link._bleak_error = FakeBleakError
+        link.kb = FakeKbConnect()
+        with self.assertRaises(RuntimeError) as cm:
+            link._connect()
+        self.assertEqual(str(cm.exception), "start_notify failed")
+        self.assertTrue(link.kb.disconnected)
+        self.assertTrue(link.loop.is_closed())
+
+    def test_failing_cleanup_keeps_the_connect_error(self):
+        link = object.__new__(c.BleLink)
+        link.loop = asyncio.new_event_loop()
+        link._bleak_error = FakeBleakError
+        link.kb = FakeKbConnect(disconnect_exc=FakeBleakError("disconnect failed"))
+        with self.assertRaises(RuntimeError) as cm:
+            link._connect()
+        self.assertEqual(str(cm.exception), "start_notify failed")
+        self.assertTrue(link.kb.disconnected)
         self.assertTrue(link.loop.is_closed())
 
 

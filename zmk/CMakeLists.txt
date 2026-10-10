@@ -57,6 +57,7 @@ if(CONFIG_RAINY75_CONFIG)
   zephyr_library_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
   zephyr_library_sources(
     src/config/cfg_registry.c
+    src/config/cfg_codec.c
     src/config/cfg_table.c
     src/config/cfg_store.c
     src/config/cfg_mgmt.c
@@ -75,6 +76,7 @@ if(CONFIG_RAINY_RGB)
     src/rainy_rgb/led_map.c
     src/rainy_rgb/reactive.c
     src/rainy_rgb/engine.c
+    src/rainy_rgb/lighting.c
     src/rainy_rgb/state.c
     src/rainy_rgb/overlay.c
     src/rainy_rgb/ble_status.c
