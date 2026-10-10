@@ -16,6 +16,22 @@ The one official web page is the settings page at
 also attached to each release as `rainy75-config.html` ([docs/config.md](docs/config.md)).
 It changes settings on a connected keyboard and never offers a download.
 
+## Which pages may talk to your keyboard
+
+A web page can reach the keyboard only after you click its Connect button and pick the
+keyboard in the browser's own device list (Web Serial or Web Bluetooth); the browser
+remembers that choice for that one site. Pick the keyboard **only** on
+`https://scholzri.github.io/rainy75-zmk/config/` or on a copy you saved yourself.
+
+The connection gives more than settings: the same port (and, for a paired computer, the
+same Bluetooth service) also accepts firmware updates, and the firmware does not check
+signatures yet. A page or program you give access to could install other firmware, and a
+malicious keyboard firmware can record or type keys. Until updates need a key combination
+on the keyboard (planned, see the [roadmap](https://github.com/scholzri/rainy75-zmk/issues/42)),
+treat "allow this site to use the keyboard" like installing software. To revoke a site's
+access in Chrome or Edge: the site settings (lock icon left of the address), USB / serial
+port and Bluetooth devices.
+
 ## Impersonation / fake "firmware download" sites
 
 Scam accounts copy this repository and publish GitHub Pages sites with a fake
