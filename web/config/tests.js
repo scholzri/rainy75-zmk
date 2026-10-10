@@ -957,6 +957,82 @@
     t.ok(e instanceof C.TransportError);
   });
 
+  // ---- Task 8: labels and help ----
+
+  /* The settings of PRs 1 to 3 (docs/config-protocol.md) and PR 5. */
+  const ALL_KEYS = ["rgb.on", "rgb.effect", "rgb.hue", "rgb.sat", "rgb.val", "rgb.speed", "rgb.boot_effect",
+    "rgb.cycle", "rgb.val_battery", "rgb.idle_s", "rgb.idle_mode", "ind.caps_style", "ind.caps_color",
+    "ind.fn_highlight", "ind.passkey_guide", "ind.bat_low", "kb.os", "kb.gui_lock", "kb.os_keys",
+    "kb.sleep_min", "kb.sleep_on_usb"];
+
+  test("labels: every setting of the firmware has a label of its type", async (C) => {
+    const m = simModel(C);
+    await m.model.load();
+    t.eq(Array.from(m.model.entries.keys()), ALL_KEYS);
+    for (const e of m.model.entries.values()) t.ok(C.isKnown(e), e.key);
+    t.eq(C.SETTINGS.map((s) => s.key).sort(), ALL_KEYS.slice().sort(), "nothing more, nothing twice");
+    for (const s of C.SETTINGS) {
+      t.ok(s.label && s.help, s.key);
+      t.ok(C.SECTIONS.some((x) => x.id === C.sectionOf(s.key)), s.key + " has a section");
+    }
+  });
+
+  test("labels: unknown keys and changed types are hidden", (C) => {
+    t.ok(!C.isKnown({ key: "rgb.future", type: "u" }));
+    t.ok(!C.isKnown({ key: "rgb.val", type: "x" }));
+    t.eq(C.settingInfo("rgb.val").label, "Brightness");
+    t.eq(C.settingInfo("x.y"), null);
+    t.eq(C.hiddenNote(1), "1 setting needs a newer page.");
+    t.eq(C.hiddenNote(3), "3 settings need a newer page.");
+  });
+
+  test("labels: every effect and name, unknown names hidden", (C) => {
+    for (const fx of C.SIM_EFFECTS.concat(["walker"])) {
+      t.ok(C.nameLabel("rgb.effect", fx) && C.nameHelp("rgb.effect", fx), fx);
+      t.eq(C.nameLabel("rgb.cycle", fx), C.nameLabel("rgb.effect", fx));
+    }
+    t.eq(C.nameLabel("rgb.boot_effect", "last"), "Last used");
+    t.eq(C.nameLabel("rgb.boot_effect", "plasma"), "Plasma");
+    t.eq(C.nameLabel("kb.os", "mac"), "Mac");
+    t.eq(C.nameLabel("ind.caps_style", "tint"), "Tint");
+    t.eq(C.nameLabel("rgb.idle_mode", "dim"), "Dim");
+    t.eq(C.nameLabel("rgb.effect", "fireworks"), null);
+    t.eq(C.nameLabel("kb.os", "linux"), null);
+    t.eq(C.nameLabel("rgb.effect", "constructor"), null);
+    t.eq(C.nameHelp("kb.os", "win"), null);
+    t.eq(C.visibleNames({ key: "rgb.effect", a: ["solid", "fireworks", "plasma"] }), ["solid", "plasma"]);
+  });
+
+  test("labels: values as text", (C) => {
+    const u = (key) => ({ key, type: "u" });
+    t.eq(C.displayValue(u("rgb.idle_s"), 0), "Never");
+    t.eq(C.displayValue(u("rgb.idle_s"), 45), "45 s");
+    t.eq(C.displayValue(u("rgb.idle_s"), 60), "1 min");
+    t.eq(C.displayValue(u("rgb.idle_s"), 90), "1 min 30 s");
+    t.eq(C.displayValue(u("ind.bat_low"), 0), "Off");
+    t.eq(C.displayValue(u("ind.bat_low"), 20), "20 %");
+    t.eq(C.displayValue(u("rgb.val_battery"), 255), "255, no cap");
+    t.eq(C.displayValue(u("rgb.val_battery"), 128), "128");
+    t.eq(C.displayValue(u("kb.sleep_min"), 0), "Never");
+    t.eq(C.displayValue(u("kb.sleep_min"), 15), "15 min");
+    t.eq(C.displayValue(u("kb.os_keys"), 2), "2");
+    t.eq(C.displayValue({ key: "rgb.on", type: "b" }, false), "Off");
+    t.eq(C.displayValue({ key: "ind.caps_color", type: "c" }, 0xff8000), "#FF8000");
+    t.eq(C.displayValue({ key: "kb.os", type: "e" }, "win"), "Windows");
+    t.eq(C.displayValue({ key: "rgb.cycle", type: "l" }, []), "All effects");
+    t.eq(C.displayValue({ key: "rgb.cycle", type: "l" }, ["plasma", "speedcolour"]), "Plasma, Speed colour");
+    t.eq(C.displayValue({ key: "rgb.val", type: "u" }, undefined), "");
+  });
+
+  test("labels: help texts carry the behaviour notes", (C) => {
+    const help = (k) => C.settingInfo(k).help;
+    t.ok(/pairing dialog on the computer is the only cue/.test(help("ind.passkey_guide")));
+    t.ok(/Fn\+B/.test(help("ind.bat_low")) && /lighting off/.test(help("ind.bat_low")));
+    t.ok(/only while the effect is drawn/.test(help("ind.caps_style")));
+    t.ok(/USB to sleep/.test(help("rgb.val_battery")) && /USB to sleep/.test(help("ind.bat_low")));
+    t.ok(/ZMK Studio/.test(C.OS_KEYS_WARNING));
+  });
+
   // end of tests
 
   async function runOne(fn, C, env) {

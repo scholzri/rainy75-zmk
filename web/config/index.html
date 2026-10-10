@@ -1168,6 +1168,176 @@ body {
   Object.assign(C, { SIM_EFFECTS: EFFECTS, SimKeyboard, SimTransport, demoOptions });
 })();
 </script>
+<!-- Section: labels and help -->
+<script data-core id="labels">
+"use strict";
+(() => {
+  const C = globalThis.RainyCore;
+
+  /* What the page shows for each setting it knows, in display order. The
+   * firmware sends keys, types and ranges only (docs/config-protocol.md); a
+   * key that is not here, or has another type, is hidden and counted in the
+   * "need a newer page" note. show(v) formats a number for its output. */
+  const SECTIONS = [
+    { id: "rgb", title: "Lighting" },
+    { id: "ind", title: "Indicators" },
+    { id: "kb", title: "Keyboard" },
+  ];
+
+  const secs = (v) => (v < 60 ? v + " s" : Math.floor(v / 60) + " min" + (v % 60 ? " " + (v % 60) + " s" : ""));
+  /* The known limit of "USB host connected" (docs/config-protocol.md). */
+  const usbLimit = (what) => "If the computer put USB to sleep and the cable is then pulled, " + what +
+    " may not apply until the next USB event.";
+
+  const SETTINGS = [
+    { key: "rgb.on", type: "b", label: "Lighting on",
+      help: "The effect on or off (Fn+Backspace). The CapsLock key, the Fn highlight, the battery gauge " +
+        "and the Bluetooth status still show when it is off; the CapsLock tint and the low-battery pulse " +
+        "do not." },
+    { key: "rgb.effect", type: "e", label: "Effect",
+      help: "The lighting effect. Fn+Enter steps to the next effect of the effect cycle." },
+    { key: "rgb.hue", type: "u", label: "Hue",
+      help: "The colour of the effect, once around the colour wheel (Fn + the # key left of Enter)." },
+    { key: "rgb.sat", type: "u", label: "Saturation", help: "0 is white, 255 the full colour." },
+    { key: "rgb.val", type: "u", label: "Brightness", help: "Brightness of the effect (Fn+Up, Fn+Down)." },
+    { key: "rgb.speed", type: "u", label: "Speed", help: "Animation speed (Fn+Right, Fn+Left)." },
+    { key: "rgb.cycle", type: "l", label: "Effect cycle",
+      help: "The effects Fn+Enter steps through, in this order; from an effect that is not in the list it " +
+        "goes to the first one. Tick the ones you want and drag them, or use the arrow buttons, to set " +
+        "the order. With none ticked, all effects are used. A list holds at most 16 entries. Applies from " +
+        "the next Fn+Enter." },
+    { key: "rgb.boot_effect", type: "e", label: "Effect at power-on",
+      help: "Last used keeps the effect you chose last. Applies from the next start." },
+    { key: "rgb.val_battery", type: "u", label: "Brightness cap without USB",
+      help: "While no USB host is connected (a sleeping computer still counts as one), the effect is " +
+        "drawn at most this bright; the Brightness setting itself does not change. 255 = no cap. " +
+        usbLimit("the cap"),
+      show: (v) => (v === 255 ? "255, no cap" : String(v)) },
+    { key: "rgb.idle_s", type: "u", label: "Idle after",
+      help: "Time without a key press until the effect turns off or dims; 0 = never. The next key press " +
+        "brings it back. The CapsLock key, the Fn highlight, the battery gauge and the Bluetooth status " +
+        "keep showing.",
+      show: (v) => (v === 0 ? "Never" : secs(v)) },
+    { key: "rgb.idle_mode", type: "e", label: "When idle",
+      help: "Off turns the effect off, Dim draws it at a quarter of its brightness. With Off the CapsLock " +
+        "tint and the low-battery pulse go dark too, because they need the effect." },
+    { key: "ind.caps_style", type: "e", label: "CapsLock indicator",
+      help: "Key lights the CapsLock key in the colour below at full strength, Tint mixes every key half " +
+        "and half with it, Off shows nothing. Tint is as bright as the effect (it follows Brightness, the " +
+        "cap without USB and Dim) and shows only while the effect is drawn: not with the lighting off or " +
+        "idle Off, not during a Bluetooth animation and not while Fn is held with the Fn highlight on." },
+    { key: "ind.caps_color", type: "c", label: "CapsLock colour", help: "The colour of the CapsLock indicator." },
+    { key: "ind.fn_highlight", type: "b", label: "Fn highlight",
+      help: "While Fn is held, keys with an Fn function light white and the others go dark. Follows " +
+        "keymap changes made in ZMK Studio. Off leaves the lighting as it is; F1 to F4 still show the " +
+        "Bluetooth slots." },
+    { key: "ind.passkey_guide", type: "b", label: "Pairing code guide",
+      help: "Lights the number row while the computer asks for a Bluetooth pairing code: dim white, a " +
+        "blue digit per key you type, Enter pulsing, a blue chase while the code is checked, a red " +
+        "flash for a wrong code. With it off, nothing on the keyboard shows that a code is expected: " +
+        "the pairing dialog on the computer is the only cue. The F1 to F4 status stays." },
+    { key: "ind.bat_low", type: "u", label: "Low battery warning",
+      help: "While no USB host is connected (a sleeping computer still counts as one), Esc pulses red " +
+        "when the battery is below this level; 0 = off. The pulse shows only while the effect is drawn, " +
+        "so never with the lighting off or idle Off: press Fn+B for the battery gauge, which shows for " +
+        "3 s. " + usbLimit("the warning"),
+      show: (v) => (v === 0 ? "Off" : v + " %") },
+    { key: "kb.os", type: "e", label: "Computer",
+      help: "Windows: the left Win and Alt keys send Win and Alt. Mac: the left Win key sends Option and " +
+        "the left Alt key sends Command, as on a Mac keyboard. Right Alt stays AltGr. Applies from the " +
+        "next key press, to the keys that use the OS Key behavior." },
+    { key: "kb.gui_lock", type: "b", label: "GUI key lock",
+      help: "Silences the GUI key, for example while gaming: the left Win key with Windows, the left Alt " +
+        "key (Command) with Mac." },
+    { key: "kb.os_keys", type: "u", label: "Keys following these settings",
+      help: "How many keys use the OS Key behavior, counted from the live keymap: 2 with the default " +
+        "keymap. It follows ZMK Studio edits at once, saved or not." },
+    { key: "kb.sleep_min", type: "u", label: "Sleep after",
+      help: "Minutes without a key press until the keyboard sleeps; 0 = never. With a USB host connected " +
+        "it sleeps only if Sleep on USB is on. A key press wakes it, which takes a few seconds.",
+      show: (v) => (v === 0 ? "Never" : v + " min") },
+    { key: "kb.sleep_on_usb", type: "b", label: "Sleep on USB",
+      help: "Also sleep while a USB host is connected. Off: the keyboard stays awake on USB, also while " +
+        "the computer sleeps, so a key press can wake the computer." },
+  ];
+
+  const EFFECTS = {
+    solid: ["Solid", "One colour on every key."],
+    rainbow: ["Rainbow", "A rainbow moving along the keys."],
+    plasma: ["Plasma", "Flowing colour waves."],
+    twinkle: ["Twinkle", "Keys sparkle at random."],
+    comet: ["Comet", "A bright dot with a fading tail runs along the keys."],
+    aurora: ["Aurora", "A slow drift between two neighbouring colours."],
+    reactive: ["Reactive", "The whole board flashes on every key press."],
+    ripple: ["Ripple", "Rainbow rings spread from each key you press."],
+    wave: ["Wave", "A diagonal wave moves across the board."],
+    rain: ["Rain", "Drops fall from the top row to the bottom."],
+    heatmap: ["Heatmap", "Keys glow when pressed and cool down over time."],
+    speedcolour: ["Speed colour", "The colour deepens the faster you type."],
+    walker: ["Walker (diagnostic)", "Lights one LED and steps to the next on each key press, for LED calibration."],
+  };
+  const EFFECT_KEYS = ["rgb.effect", "rgb.cycle", "rgb.boot_effect"];
+
+  const NAMES = {
+    "rgb.boot_effect": { last: "Last used" },
+    "rgb.idle_mode": { off: "Off", dim: "Dim" },
+    "ind.caps_style": { key: "Key", tint: "Tint", off: "Off" },
+    "kb.os": { win: "Windows", mac: "Mac" },
+  };
+
+  const OS_KEYS_WARNING = "No key uses the OS Key behavior, so the Computer and GUI key lock settings do " +
+    "nothing. The left Win and Alt keys were probably rebound in ZMK Studio. Choose OS Key for them there " +
+    "again and save, or use Restore Stock Settings in ZMK Studio (it also drops your other saved edits).";
+
+  const byKey = new Map(SETTINGS.map((s) => [s.key, s]));
+  const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+
+  const settingInfo = (key) => byKey.get(key) || null;
+  const sectionOf = (key) => key.split(".")[0];
+  const isKnown = (entry) => {
+    const s = byKey.get(entry.key);
+    return !!s && s.type === entry.type;
+  };
+
+  /* The label of a name of an e or l setting, null if the page does not know it. */
+  function nameLabel(key, name) {
+    if (NAMES[key] && own(NAMES[key], name)) return NAMES[key][name];
+    if (EFFECT_KEYS.includes(key) && own(EFFECTS, name)) return EFFECTS[name][0];
+    return null;
+  }
+
+  function nameHelp(key, name) {
+    return EFFECT_KEYS.includes(key) && own(EFFECTS, name) ? EFFECTS[name][1] : null;
+  }
+
+  const visibleNames = (entry) => entry.a.filter((n) => nameLabel(entry.key, n) !== null);
+
+  /* A value as text: outputs, read-only settings. */
+  function displayValue(entry, v) {
+    if (v === undefined || v === null) return "";
+    const s = byKey.get(entry.key);
+    switch (entry.type) {
+      case "b":
+        return v ? "On" : "Off";
+      case "c":
+        return C.formatColor(v);
+      case "e":
+        return nameLabel(entry.key, v) || v;
+      case "l":
+        return v.length ? v.map((n) => nameLabel(entry.key, n) || n).join(", ") : "All effects";
+      default:
+        return s && s.show ? s.show(v) : String(v);
+    }
+  }
+
+  const hiddenNote = (n) => (n === 1 ? "1 setting needs a newer page." : n + " settings need a newer page.");
+
+  Object.assign(C, {
+    SECTIONS, SETTINGS, EFFECTS, OS_KEYS_WARNING, settingInfo, sectionOf, isKnown, nameLabel, nameHelp,
+    visibleNames, displayValue, hiddenNote,
+  });
+})();
+</script>
 <!-- end of sections -->
 </body>
 </html>
