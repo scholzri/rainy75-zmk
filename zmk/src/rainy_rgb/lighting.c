@@ -22,3 +22,7 @@ uint8_t rrgb_render_val(uint8_t val, uint8_t cap, bool usb_host, enum rrgb_idle_
 
     return idle == RRGB_IDLE_DIMMED ? (uint8_t)(v / 4) : v;
 }
+
+bool rrgb_usb_host(bool hid_ready, bool bus_suspended, bool output_ble) {
+    return hid_ready && !(bus_suspended && output_ble);
+}

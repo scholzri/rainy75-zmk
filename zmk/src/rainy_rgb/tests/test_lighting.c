@@ -2,8 +2,8 @@
  * Copyright (c) 2026 scholzri
  * SPDX-License-Identifier: Apache-2.0
  *
- * Host tests for the brightness policy (lighting.c): idle timer and battery
- * cap.
+ * Host tests for the brightness policy (lighting.c): idle timer, battery
+ * cap and the USB host decision.
  */
 
 #include "../lighting.h"
@@ -46,11 +46,27 @@ static void test_dim(void) {
     CHECK(rrgb_render_val(200, 255, true, RRGB_IDLE_DARK) == 200); /* dark: no effect drawn */
 }
 
+static void test_usb_host(void) {
+    /* never configured: no host, whatever the bus and output */
+    CHECK(!rrgb_usb_host(false, false, false));
+    CHECK(!rrgb_usb_host(false, true, false));
+    CHECK(!rrgb_usb_host(false, false, true));
+    CHECK(!rrgb_usb_host(false, true, true));
+    /* configured and the bus running: a host on either output */
+    CHECK(rrgb_usb_host(true, false, false));
+    CHECK(rrgb_usb_host(true, false, true));
+    /* suspended (PC asleep or a pull without bus reset): a host with output
+     * USB (the next keypress re-attaches), none with output Bluetooth */
+    CHECK(rrgb_usb_host(true, true, false));
+    CHECK(!rrgb_usb_host(true, true, true));
+}
+
 int main(void) {
     test_idle_never();
     test_idle_timeout();
     test_idle_wrap();
     test_cap();
     test_dim();
+    test_usb_host();
     DONE();
 }

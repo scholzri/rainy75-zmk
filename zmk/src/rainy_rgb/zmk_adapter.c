@@ -20,6 +20,7 @@
 #include <zmk/events/usb_conn_state_changed.h>
 #endif
 #include "engine.h"
+#include "lighting.h"
 #include "overlay.h"
 
 #if IS_ENABLED(CONFIG_ZMK_BLE)
@@ -55,6 +56,30 @@ int rrgb_strip_init(void) {
     }
     return 0;
 }
+
+#if IS_ENABLED(CONFIG_ZMK_USB)
+/* --- USB host for rgb.val_battery and ind.bat_low ------------------------
+ * Both apply while no USB host is connected; the rule is rrgb_usb_host() in
+ * lighting.c. zmk_usb_is_hid_ready(): a host configured the keyboard, also
+ * while it suspends the bus (PC asleep). The event's conn_state alone would
+ * count an unconfigured SUSPEND as a host. This board has no VBUS detection:
+ * a cable pull can arrive as USB_DC_SUSPEND straight from CONFIGURED with no
+ * bus reset, so ZMK's usb.c keeps is_configured (it takes it for a sleeping
+ * host) and hid_ready stays true. With output USB the next keypress
+ * re-attaches and clears it; with output Bluetooth the keys go over BLE and
+ * nothing would, so there a suspended bus counts as no host. Re-evaluated on
+ * every zmk_usb_conn_state_changed, on zmk_endpoint_changed (the output
+ * flips without a USB event) and once at boot. */
+static void rrgb_usb_host_refresh(void) {
+    bool suspended = zmk_usb_get_status() == USB_DC_SUSPEND;
+    bool out_ble = false;
+
+#if IS_ENABLED(CONFIG_ZMK_BLE)
+    out_ble = zmk_endpoint_get_selected().transport == ZMK_TRANSPORT_BLE;
+#endif
+    rrgb_set_usb_host(rrgb_usb_host(zmk_usb_is_hid_ready(), suspended, out_ble));
+}
+#endif
 
 #if IS_ENABLED(CONFIG_ZMK_BLE)
 /* --- BLE slot status (ble_status.c) ---------------------------------------
@@ -178,6 +203,9 @@ static int rrgb_ble_listener(const zmk_event_t *eh) {
     const struct rainy75_ble_open_profile_timeout *t = as_rainy75_ble_open_profile_timeout(eh);
     if (t) { rrgb_ble_queue("open slot timeout", RRGB_BLE_EV_FAILED, t->profile, 0); }
 #endif
+#if IS_ENABLED(CONFIG_ZMK_USB)
+    if (as_zmk_endpoint_changed(eh)) { rrgb_usb_host_refresh(); }   /* output changed */
+#endif
     rrgb_ble_kick();
     return ZMK_EV_EVENT_BUBBLE;
 }
@@ -259,12 +287,8 @@ static int rrgb_event_listener(const zmk_event_t *eh) {
     if (bev) { rrgb_overlay_set_battery(bev->state_of_charge); }
 
 #if IS_ENABLED(CONFIG_ZMK_USB)
-    /* rgb.val_battery and ind.bat_low apply while no USB host is connected.
-     * zmk_usb_is_hid_ready(): a host configured the keyboard, also while it
-     * suspends the bus (PC asleep); a cable pull goes through a bus reset,
-     * which clears it (zmk usb.c). The event's conn_state alone would count
-     * an unconfigured SUSPEND as a host. */
-    if (as_zmk_usb_conn_state_changed(eh)) { rrgb_set_usb_host(zmk_usb_is_hid_ready()); }
+    /* USB host for rgb.val_battery / ind.bat_low, see rrgb_usb_host_refresh() */
+    if (as_zmk_usb_conn_state_changed(eh)) { rrgb_usb_host_refresh(); }
 #endif
 
     return ZMK_EV_EVENT_BUBBLE;   /* passive observer */
@@ -283,7 +307,7 @@ static int rrgb_overlay_seed(void) {
     rrgb_overlay_set_fn(zmk_keymap_layer_active(RRGB_FN_LAYER));
     rrgb_overlay_set_battery(zmk_battery_state_of_charge());
 #if IS_ENABLED(CONFIG_ZMK_USB)
-    rrgb_set_usb_host(zmk_usb_is_hid_ready());
+    rrgb_usb_host_refresh();
 #endif
     return 0;
 }

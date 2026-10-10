@@ -118,11 +118,12 @@ read).
   not have; when loading, they are skipped (a list of only unknown names loads as empty).
 - `rgb.val_battery`: while no USB host is connected the effect renders at
   `min(rgb.val, rgb.val_battery)`; `rgb.val` itself does not change. "USB host connected"
-  means a host has configured the keyboard, also while the host sleeps (ZMK
-  `zmk_usb_is_hid_ready()`). Known limit: if the host put the USB bus to sleep and the
-  cable is then pulled, the keyboard can still count as connected (no cap, no low-battery
-  pulse) until the next USB event; with output USB the first keypress clears it, with
-  output Bluetooth it can persist.
+  means a host has configured the keyboard (ZMK `zmk_usb_is_hid_ready()`), but with
+  output Bluetooth a suspended USB bus counts as no host. The board cannot sense the cable
+  (no VBUS pin), and a pull may arrive as a plain bus suspend: with output Bluetooth the cap
+  applies within about a second, with output USB at the first keypress after the pull
+  (about 3 to 4 s after it at the earliest). A PC asleep with output Bluetooth also counts
+  as no host, so the board dims while it sleeps.
 - `rgb.idle_s` / `rgb.idle_mode`: after `rgb.idle_s` seconds without a key event, the
   effect turns off (`off`) or renders at a quarter of its brightness (`dim`); the next key
   brings it back. The indicators (CapsLock, Fn highlight, battery gauge, Bluetooth status,
@@ -144,10 +145,10 @@ read).
   is the only cue that digits are expected. After Enter the slot being verified still
   blinks and the effect stays off until the pairing ends.
 - `ind.bat_low`: while no USB host is connected (as for `rgb.val_battery`, with the same
-  known limit) and the battery level is below this percentage, Esc pulses red (2 s period)
-  on top of the effect; 0 = off. It shows only while the effect is drawn (RGB on, not idle
-  `off`, not host pixel mode, not during a Bluetooth animation), and a battery level of 0
-  (no reading yet) never pulses.
+  cable pull and sleep rules) and the battery level is below this percentage, Esc pulses
+  red (2 s period) on top of the effect; 0 = off. It shows only while the effect is drawn
+  (RGB on, not idle `off`, not host pixel mode, not during a Bluetooth animation), and a
+  battery level of 0 (no reading yet) never pulses.
 
 ## Storage
 

@@ -135,8 +135,8 @@ Rendered on top of the active effect — and **still shown when RGB is toggled o
   ones, a discard, and Studio's "restore stock settings", which raises no event). Off:
   holding Fn leaves the lighting as it is; the BLE status still shows on F1..F4.
 - **Low battery** (`ind.bat_low`, 0..50 %, default 0 = off) → while no USB host is
-  connected and the battery level is below the threshold, Esc pulses red (2 s period) on
-  top of the effect. Only while the effect is drawn (RGB on, not idle off, no BLE
+  connected (same rule as `rgb.val_battery`, see below) and the battery level is below the
+  threshold, Esc pulses red (2 s period) on top of the effect. Only while the effect is drawn (RGB on, not idle off, no BLE
   suppression, no host mode): the pulse never keeps the LED rail on by itself. A level of 0
   (ZMK's value before its first battery sample) never pulses.
 - **Battery gauge** (Fn+B) → a 10-segment bar on the number row, level-colored
@@ -293,15 +293,19 @@ blanked the whole strip, indicators included, after ZMK's activity idle.
 
 `rgb.val_battery` (16..255, default 255 = no cap): while no USB host is connected, the
 effect renders at `min(rgb.val, rgb.val_battery)`; the stored `rgb.val` (Fn+↑/↓) does not
-change. "USB host connected" is ZMK's `zmk_usb_is_hid_ready()`: a host configured the
-keyboard, also while it suspends the bus (PC asleep); pulling the cable goes through a bus
-reset, which clears it. This board has no VBUS detection, so `zmk_usb_is_powered()` would
-stay true on battery. `zmk_adapter.c` follows the state through
-`zmk_usb_conn_state_changed` and hands it to `rrgb_set_usb_host()` in `engine.c`, which
-logs `usb host connected` / `usb host gone` on a change. Known limit: if the PC put the USB
-bus to sleep and the cable is then pulled, the keyboard can still count as connected to a
-USB host (no cap, no low-battery pulse) until the next USB event; with output USB the first
-keypress clears it, with output BLE it can persist.
+change. "USB host connected" (`rrgb_usb_host()` in `lighting.c`, also used by
+`ind.bat_low`) means a host configured the keyboard (ZMK's `zmk_usb_is_hid_ready()`),
+except that a suspended bus does not count while the output is Bluetooth. This board has no
+VBUS detection (`zmk_usb_is_powered()` would stay true on battery), so a cable pull may
+arrive as a plain bus suspend with no bus reset; ZMK then takes it for a sleeping host and
+keeps the keyboard configured. With output Bluetooth the suspended bus counts as no host, so
+the cap applies within about a second of the pull. With output USB the first keypress after
+the pull clears it: ZMK re-attaches (about 3 to 4 s holdoff after the pull) and the host is
+gone. The other side of the rule: a sleeping PC with output Bluetooth also counts as no
+host, so the board dims while the PC sleeps. `zmk_adapter.c` re-evaluates on
+`zmk_usb_conn_state_changed`, on `zmk_endpoint_changed` and at boot, and hands the result
+to `rrgb_set_usb_host()` in `engine.c`, which logs `usb host connected` / `usb host gone`
+on a change.
 
 ## LED power rail auto-cut (PC2)
 
