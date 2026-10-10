@@ -97,7 +97,9 @@ def parse_value(entry, text):
             raise ValueError(f"{key}: {text!r} is not one of {', '.join(a)}")
         return text
     if typ == "l":
-        names = [x for x in text.split(",") if x]
+        # Duplicates dropped here, the first one kept, as the keyboard does:
+        # it refuses more than 16 entries before it drops any.
+        names = list(dict.fromkeys(x for x in text.split(",") if x))
         bad = [x for x in names if x not in a]
         if bad:
             raise ValueError(f"{key}: unknown {', '.join(bad)} (known: {', '.join(a)})")

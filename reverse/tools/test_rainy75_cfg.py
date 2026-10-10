@@ -81,6 +81,15 @@ class ParseValue(unittest.TestCase):
         with self.assertRaises(ValueError):
             c.parse_value(ENTRIES["rgb.cycle"], "solid,fire")
 
+    def test_list_duplicates(self):
+        # dropped before sending, the first one kept: the keyboard refuses
+        # more than 16 entries even when duplicates would shrink them
+        self.assertEqual(c.parse_value(ENTRIES["rgb.cycle"], "plasma,solid,plasma"),
+                         ["plasma", "solid"])
+        names = [f"fx{i}" for i in range(16)]
+        entry = ["rgb.cycle", "l", names, None, 0]
+        self.assertEqual(c.parse_value(entry, ",".join(names + names[:4])), names)
+
 
 class Format(unittest.TestCase):
     def test_values(self):
