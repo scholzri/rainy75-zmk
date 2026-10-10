@@ -113,7 +113,7 @@ Messages you may meet:
 | This is the ZMK Studio port. | You picked the Studio port: pick the other one. |
 | The port could not be opened (...) | Another program holds the port: close it and try again. While ZMK Studio is connected over USB its port is busy: choose the other Rainy 75 port. |
 | The keyboard is not paired with this computer. | Pair it first, as under Over Bluetooth: a free profile (Fn+F1, F2 or F3), the computer's Bluetooth settings, the code typed on the keyboard's number row, Enter. If the computer already lists it as paired, remove the pairing on both sides and pair again. |
-| Bluetooth adapter not available. | The computer has no working Bluetooth adapter, or Bluetooth is switched off: turn it on. USB still works. |
+| Bluetooth adapter not available. | The computer has no working Bluetooth adapter (on some systems also when Bluetooth is switched off; Chrome may instead show its own "Bluetooth is off" note in the chooser). Turn Bluetooth on or use USB. |
 | The keyboard did not answer over Bluetooth. | The remembered keyboard is not reachable: click Connect Bluetooth again and choose it from the list. |
 | This firmware has no runtime settings | The firmware is older than v0.4.0: update it. |
 | The keyboard refused: invalid value (rc 3) | The keyboard did not accept the value (also "unknown setting", "read-only setting"). The page shows the value the keyboard has. |
