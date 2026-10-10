@@ -63,10 +63,14 @@ Connect the page first, then open Studio.
 
 ### Over Bluetooth
 
-1. The keyboard must be **paired with this computer** (as a keyboard, in the system's
-   Bluetooth settings, typing the code it shows). The settings need that pairing; a
-   keyboard paired only with another computer gets the message "The keyboard is not paired
-   with this computer".
+1. The keyboard must be **paired with this computer**. The settings need that pairing (an
+   authenticated bond); a keyboard paired only with another computer gets the message
+   "The keyboard is not paired with this computer". To pair: select a free profile with
+   Fn+F1, F2 or F3, pick "Rainy 75 Pro" in the computer's Bluetooth settings, and type the
+   code the computer shows on the keyboard's number row, then press Enter
+   ([usage.md](usage.md#pair-a-new-host)). If the computer lists the keyboard as paired but
+   the page still says it is not paired, remove the pairing on both sides first
+   ([usage.md](usage.md#remove-a-pairing)).
 2. Click **Connect Bluetooth** and choose "Rainy 75 Pro".
 3. Next time the page connects without the list where the browser supports it (in Chrome
    behind `chrome://flags/#enable-experimental-web-platform-features`); otherwise the list
@@ -107,7 +111,7 @@ Messages you may meet:
 | USB needs Chrome or Edge on a desktop computer. / Bluetooth is not available in this browser. | The other connection still works. On Linux, Bluetooth needs the Chrome flag above. |
 | This is the ZMK Studio port. | You picked the Studio port: pick the other one. |
 | The port could not be opened (...) | Another program holds the port: close it and try again. |
-| The keyboard is not paired with this computer. | Pair it in the system's Bluetooth settings first. |
+| The keyboard is not paired with this computer. | Pair it first, as under Over Bluetooth: a free profile (Fn+F1, F2 or F3), the computer's Bluetooth settings, the code typed on the keyboard's number row, Enter. If the computer already lists it as paired, remove the pairing on both sides and pair again. |
 | The keyboard did not answer over Bluetooth. | The remembered keyboard is not reachable: click Connect Bluetooth again and choose it from the list. |
 | This firmware has no runtime settings | The firmware is older than v0.4.0: update it. |
 | The keyboard refused: invalid value (rc 3) | The keyboard did not accept the value (also "unknown setting", "read-only setting"). The page shows the value the keyboard has. |
@@ -126,17 +130,19 @@ The page needs no internet. Save `rainy75-config.html` from a release (or use
   ```
 
   and open `http://localhost:8000/config/` (or `http://localhost:8000/rainy75-config.html`),
-- or open the file directly. Chrome treats a file opened from disk as a secure page too,
-  so USB and Bluetooth are offered there as well, with the same Chrome flags as on the
-  hosted page. That the port and device lists open from a file has not been confirmed with
-  a real keyboard yet; if they do not open, use the local server above.
+- or open the file directly. Chrome treats a file opened from disk as a secure page too, so
+  the page loads and shows the Connect buttons (Web Serial is available there). That the
+  port and device lists open from a file, and that a port or keyboard you allowed before is
+  picked up again without the list, has not been confirmed with a real keyboard yet; if
+  they do not work, use the local server above.
 
 The demo works offline too (`index.html?demo`).
 
 ## The command line
 
 `reverse/tools/rainy75_cfg.py` does the same from a terminal, from a clone of the
-repository (Python 3 on Linux or macOS, no packages for USB; Bluetooth needs `bleak`):
+repository (Python 3 on Linux or macOS, no packages for USB; `--ble` needs `bleak` and a
+keyboard paired with this computer, as under Over Bluetooth):
 
 ```bash
 python3 reverse/tools/rainy75_cfg.py info               # protocol, effects, change counter
@@ -209,7 +215,7 @@ Bluetooth it can persist.
 |---|---|---|---|
 | `kb.os` (Computer) | `win`, `mac` | `win` | `mac` swaps the left Win and Alt keys to Option and Command, as on a Mac keyboard ([usage.md](usage.md#windows-and-mac)). Right Alt stays AltGr. Applies from the next key press. |
 | `kb.gui_lock` (GUI key lock) | on, off | off | Silences the GUI key (Win, or Command on a Mac), for example while gaming. |
-| `kb.os_keys` (Keys following these settings) | 0 to 83, read-only | counted (2 with the default keymap) | How many keys use the OS Key behavior, counted from the live keymap. 0 means the left Win and Alt keys were rebound in ZMK Studio, so `kb.os` and `kb.gui_lock` change nothing; the page shows a warning then. Bind them to "OS Key" in Studio again and save, or use Restore Stock Settings there. |
+| `kb.os_keys` (Keys following these settings) | 0 to 83, read-only | counted (2 with the default keymap) | How many keys use the OS Key behavior, counted from the live keymap. 0 means the left Win and Alt keys were rebound in ZMK Studio, so `kb.os` and `kb.gui_lock` change nothing; the page shows a warning then. Bind them to "OS Key" in Studio again and save, or use Restore Stock Settings there (it also drops your other saved Studio edits). |
 
 The page also knows the sleep settings `kb.sleep_min` ("Sleep after": minutes without a
 key press until the keyboard sleeps, 0 = never) and `kb.sleep_on_usb` ("Sleep on USB":

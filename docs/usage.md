@@ -49,10 +49,9 @@ Both keys use the **OS Key** behavior (`&os_key`). ZMK Studio shows it with the 
 "Win (Option on a Mac)" and "Alt (Command on a Mac)". A key you bind to something else in
 Studio no longer follows the settings; `python3 reverse/tools/rainy75_cfg.py get kb.os_keys`
 shows how many keys use the OS Key behavior (2 with the default keymap; the config page shows
-the number and warns at 0). To get the behavior
-back on a key you rebound, choose "OS Key" for it again in Studio and save; "Restore Stock
-Settings" in Studio restores both keys too, but it also drops every other edit you saved in
-Studio.
+the number and warns at 0). To get the behavior back on a key you rebound, choose "OS Key"
+for it again in Studio and save; "Restore Stock Settings" in Studio restores both keys too,
+but it also drops every other edit you saved in Studio.
 
 ## Bluetooth and USB
 

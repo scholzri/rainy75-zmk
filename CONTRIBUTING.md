@@ -47,13 +47,17 @@ open `http://localhost:8765/config/test.html` in Chrome (the title shows PASS or
 
 ## How the code is organized
 
-Everything we add lives **out-of-tree** under [`zmk/`](zmk/) so the pinned ZMK/Zephyr can
-be bumped without losing our work:
+All firmware code we add lives **out-of-tree** under [`zmk/`](zmk/) so the pinned ZMK/Zephyr
+can be bumped without losing our work; the config page is the one exception, a separate web
+page under `web/config/` that no firmware build touches:
 
 ```
 zmk/boards/rainy75/     # board: DTS, keymap, defconfig, physical layout
 zmk/drivers/            # BLE / USB / LED-strip / battery / watchdog
 zmk/src/rainy_rgb/      # custom RGB lighting engine (host-tested)
+zmk/src/config/         # runtime settings: registry, codec, table, storage, mcumgr group 67 (host-tested)
+zmk/src/os_key/         # OS key decisions: Win/Mac swap, GUI lock (host-tested)
+web/config/             # config page: one HTML file, no build step (Node and browser tests)
 conf/                   # app / mcuboot / ota-bridge config overlays
 patches/                # minimal upstream patches, applied by build.sh
 ```

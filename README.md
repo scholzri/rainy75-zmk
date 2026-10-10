@@ -201,6 +201,8 @@ zmk/                  # Our Zephyr module: board def, out-of-tree drivers, rainy
   boards/rainy75/     # Board definition (DTS, keymap, defconfig)
   drivers/            # BLE / USB / LED-strip / battery / watchdog drivers
   src/rainy_rgb/      # Custom RGB lighting engine
+  src/config/         # Runtime settings (mcumgr group 67), see docs/config-protocol.md
+  src/os_key/         # OS key behavior decisions (Win/Mac swap, GUI lock)
   lib/                # Telink BLE blob, only for --blob builds: fetched by fetch_ble_blob.sh, not committed
 conf/                 # Build configuration overlays (app / mcuboot / ota-bridge)
 patches/             # Small Zephyr patches (applied by west)
@@ -225,10 +227,13 @@ Where this is heading: the pinned **[Road to 1.0](https://github.com/scholzri/ra
 issue has the plan and the points where help is most welcome, especially test reports from
 Windows, macOS and iOS.
 
-- **Build before submitting:** `./build.sh -a --iso` (and `--ansi`) and run the engine host
-  tests (`./zmk/src/rainy_rgb/tests/run_host_tests.sh`).
-- **Keep it out-of-tree:** new functionality lives under `zmk/`, so the ZMK pin can be
-  bumped without losing it.
+- **Build before submitting:** `./build.sh -a --iso` (and `--ansi`) and run the host tests
+  of what you touched: `zmk/src/rainy_rgb/tests/run_host_tests.sh`,
+  `zmk/src/config/tests/run_host_tests.sh`, `zmk/src/os_key/tests/run_host_tests.sh`, and
+  `node web/config/test-node.mjs` for the config page ([CONTRIBUTING.md](CONTRIBUTING.md)
+  lists all of them).
+- **Keep it out-of-tree:** new firmware functionality lives under `zmk/`, so the ZMK pin
+  can be bumped without losing it (the config page lives in `web/config/`).
 - **ANSI / other layouts:** ANSI is fully verified on hardware; other regional ISO
   layouts are mostly a keymap change — see
   [CONTRIBUTING.md](CONTRIBUTING.md#layout-variants-iso--ansi).
