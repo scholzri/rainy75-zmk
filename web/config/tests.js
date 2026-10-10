@@ -305,6 +305,91 @@
     t.ok(e instanceof C.TransportError);
   });
 
+  // ---- Task 3: USB serial framing ----
+
+  const joinLines = (lines) => {
+    const all = new Uint8Array(lines.reduce((n, l) => n + l.length, 0));
+    let o = 0;
+    for (const l of lines) {
+      all.set(l, o);
+      o += l.length;
+    }
+    return all;
+  };
+  const counting = (n) => Uint8Array.from({ length: n }, (_, i) => i & 255);
+
+  test("serial: CRC16-XMODEM check value", (C) => {
+    t.eq(C.crc16(ascii("123456789")), 0x31c3);
+    t.eq(C.crc16(new Uint8Array(0)), 0);
+  });
+
+  test("serial: info request framed byte for byte as restore_original.py", (C) => {
+    const lines = C.serialEncode(C.smpRequest(C.SMP.READ, 67, 0, 0, {}));
+    t.eq(lines.length, 1);
+    t.eq(Array.from(lines[0]), Array.from(bytes(6, 9, ascii("AAsAAAABAEMAAKAFCg=="), 10)));
+  });
+
+  test("serial: long packets split into lines of at most 127 bytes", (C) => {
+    const lines = C.serialEncode(counting(300));
+    t.eq(lines.map((l) => l.length), [127, 127, 127, 39]);
+    t.eq([lines[0][0], lines[0][1]], [6, 9]);
+    for (const l of lines.slice(1)) t.eq([l[0], l[1]], [4, 20]);
+    for (const l of lines) t.eq(l[l.length - 1], 10);
+  });
+
+  test("serial: decoder round trip for many sizes", (C) => {
+    for (const n of [1, 8, 9, 89, 90, 91, 92, 93, 185, 186, 187, 300, 511]) {
+      const d = new C.SerialDecoder();
+      t.eq(d.push(joinLines(C.serialEncode(counting(n)))), [counting(n)], "size " + n);
+    }
+  });
+
+  test("serial: log lines before, between and after frame lines are skipped", (C) => {
+    const d = new C.SerialDecoder();
+    const lines = C.serialEncode(counting(200));
+    const log = ascii("[00:00:01.234,000] <inf> zmk: something\r\n");
+    t.eq(lines.length, 3);
+    const out = d.push(joinLines([log, lines[0], log, lines[1], log, lines[2], ascii("\r\n"), log]));
+    t.eq(out, [counting(200)]);
+    t.eq(d.logLines, 5);
+    t.eq(d.badFrames, 0);
+  });
+
+  test("serial: frames split at any byte arrive whole", (C) => {
+    const d = new C.SerialDecoder();
+    const all = joinLines([ascii("boot\r\n")].concat(C.serialEncode(counting(150)), C.serialEncode(counting(3))));
+    const got = [];
+    for (let i = 0; i < all.length; i += 7) got.push(...d.push(all.subarray(i, i + 7)));
+    t.eq(got, [counting(150), counting(3)]);
+  });
+
+  test("serial: CRLF line ends are fine", (C) => {
+    const d = new C.SerialDecoder();
+    const lines = C.serialEncode(counting(130)).map((l) => bytes(Array.from(l.subarray(0, l.length - 1)), 13, 10));
+    t.eq(d.push(joinLines(lines)), [counting(130)]);
+  });
+
+  test("serial: a bad CRC drops the frame, the next one decodes", (C) => {
+    const d = new C.SerialDecoder();
+    const broken = C.serialEncode(counting(10))[0];
+    broken[5] = broken[5] === 65 ? 66 : 65;
+    t.eq(d.push(joinLines([broken].concat(C.serialEncode(counting(4))))), [counting(4)]);
+    t.eq(d.badFrames, 1);
+  });
+
+  test("serial: bad base64 and stray continuation lines are dropped", (C) => {
+    const d = new C.SerialDecoder();
+    const cont = C.serialEncode(counting(200))[1];
+    t.eq(d.push(joinLines([cont, bytes(6, 9, ascii("!!!!"), 10)].concat(C.serialEncode(counting(2))))), [counting(2)]);
+    t.eq(d.badFrames, 2);
+  });
+
+  test("serial: a new first line abandons a half frame", (C) => {
+    const d = new C.SerialDecoder();
+    const half = C.serialEncode(counting(200))[0];
+    t.eq(d.push(joinLines([half].concat(C.serialEncode(counting(5))))), [counting(5)]);
+  });
+
   // end of tests
 
   async function runOne(fn, C, env) {

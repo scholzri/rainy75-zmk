@@ -330,6 +330,140 @@ body {
   // end of SMP + CBOR
 })();
 </script>
+<!-- Section: USB transport -->
+<script data-core id="usb">
+"use strict";
+(() => {
+  const C = globalThis.RainyCore;
+
+  /* SMP over the console serial port, the framing of Zephyr's mcumgr serial
+   * transport (as reverse/tools/restore_original.py does it): length (2 bytes,
+   * big-endian: packet + CRC), packet, CRC16-XMODEM of the packet (big-endian),
+   * base64, cut into lines of at most 127 bytes. The first line starts with
+   * 0x06 0x09, the others with 0x04 0x14, each ends with "\n". The same port
+   * carries the plain-text Zephyr log: a line without a frame marker is log
+   * text and is skipped (as rainy75_dfu.py does). */
+  const SERIAL_LINE_MAX = 127;
+  const B64_PER_LINE = SERIAL_LINE_MAX - 3; /* 124: 2 marker bytes and "\n" */
+  const LINE_LIMIT = 4096; /* longer lines are cut (log noise) */
+
+  function crc16(data, crc = 0) {
+    for (const b of data) {
+      crc ^= b << 8;
+      for (let i = 0; i < 8; i++) crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+    }
+    return crc;
+  }
+
+  function b64encode(data) {
+    let s = "";
+    for (let i = 0; i < data.length; i += 0x8000) s += String.fromCharCode.apply(null, data.subarray(i, i + 0x8000));
+    return btoa(s);
+  }
+
+  function b64decode(text) {
+    const s = atob(text);
+    const out = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+    return out;
+  }
+
+  /* SMP packet -> the lines to write, each a Uint8Array. */
+  function serialEncode(packet) {
+    const full = new Uint8Array(packet.length + 4);
+    const n = packet.length + 2;
+    const crc = crc16(packet);
+    full[0] = n >> 8;
+    full[1] = n & 255;
+    full.set(packet, 2);
+    full[full.length - 2] = crc >> 8;
+    full[full.length - 1] = crc & 255;
+    const b64 = b64encode(full);
+    const lines = [];
+    for (let i = 0; i < b64.length; i += B64_PER_LINE) {
+      const chunk = b64.slice(i, i + B64_PER_LINE);
+      const line = new Uint8Array(chunk.length + 3);
+      line[0] = i === 0 ? 0x06 : 0x04;
+      line[1] = i === 0 ? 0x09 : 0x14;
+      for (let j = 0; j < chunk.length; j++) line[2 + j] = chunk.charCodeAt(j);
+      line[line.length - 1] = 0x0a;
+      lines.push(line);
+    }
+    return lines;
+  }
+
+  /* Received bytes -> SMP packets. push() takes any chunk (lines may be split
+   * anywhere) and returns the packets completed by it. Each line's base64 is
+   * decoded on its own, as Zephyr does; a frame with a bad CRC or bad base64
+   * is dropped (badFrames), log lines are counted (logLines). */
+  class SerialDecoder {
+    constructor() {
+      this.line = [];
+      this.frame = null;
+      this.logLines = 0;
+      this.badFrames = 0;
+    }
+
+    push(chunk) {
+      const out = [];
+      for (const b of chunk) {
+        if (b === 0x0a) {
+          const packet = this._line(this.line);
+          this.line = [];
+          if (packet) out.push(packet);
+        } else if (this.line.length < LINE_LIMIT) {
+          this.line.push(b);
+        }
+      }
+      return out;
+    }
+
+    _line(bytes) {
+      let n = bytes.length;
+      if (n > 0 && bytes[n - 1] === 0x0d) n--;
+      const first = n >= 2 && bytes[0] === 0x06 && bytes[1] === 0x09;
+      const cont = n >= 2 && bytes[0] === 0x04 && bytes[1] === 0x14;
+      if (!first && !cont) {
+        this.logLines++;
+        return null;
+      }
+      if (cont && !this.frame) {
+        this.badFrames++;
+        return null;
+      }
+      let data;
+      try {
+        data = b64decode(String.fromCharCode.apply(null, bytes.slice(2, n)));
+      } catch (e) {
+        this.frame = null;
+        this.badFrames++;
+        return null;
+      }
+      if (first) {
+        this.frame = data;
+      } else {
+        const joined = new Uint8Array(this.frame.length + data.length);
+        joined.set(this.frame);
+        joined.set(data, this.frame.length);
+        this.frame = joined;
+      }
+      const buf = this.frame;
+      if (buf.length < 2) return null;
+      const len = (buf[0] << 8) | buf[1]; /* packet + CRC */
+      if (buf.length - 2 < len) return null; /* more lines to come */
+      this.frame = null;
+      if (buf.length - 2 > len || len < 2 || crc16(buf.subarray(2, 2 + len)) !== 0) {
+        this.badFrames++;
+        return null;
+      }
+      return buf.slice(2, len);
+    }
+  }
+
+  Object.assign(C, { SERIAL_LINE_MAX, crc16, b64encode, b64decode, serialEncode, SerialDecoder });
+  // end of USB transport
+})();
+</script>
 <!-- end of sections -->
 </body>
 </html>
