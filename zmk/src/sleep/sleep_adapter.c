@@ -127,11 +127,28 @@ static bool usb_host(uint32_t now) {
     bool configured = zmk_usb_is_hid_ready();
     bool suspended = zmk_usb_get_status() == USB_DC_SUSPEND;
     bool output_ble = false;
+    /* log text only: the decision below uses output_ble alone. Without
+     * ZMK_BLE the endpoint is not read and the output shows as usb. */
+    const char *output = "usb";
+    uint8_t output_code = 1; /* 0 none, 1 usb, 2 ble: keeps the three apart in state */
     bool host;
     uint8_t state;
 
 #if IS_ENABLED(CONFIG_ZMK_BLE)
-    output_ble = zmk_endpoint_get_selected().transport == ZMK_TRANSPORT_BLE;
+    switch (zmk_endpoint_get_selected().transport) {
+    case ZMK_TRANSPORT_BLE:
+        output_ble = true;
+        output = "ble";
+        output_code = 2;
+        break;
+    case ZMK_TRANSPORT_NONE:
+        /* boot before any connection, or on battery before the link is up */
+        output = "none";
+        output_code = 0;
+        break;
+    default:
+        break;
+    }
 #endif
     if (!(suspended && output_ble)) {
         ble_suspended = false;
@@ -141,10 +158,10 @@ static bool usb_host(uint32_t now) {
     }
     host = sleep_policy_usb_host(configured, suspended, output_ble,
                                  ble_suspended ? now - ble_suspended_since : 0);
-    state = (uint8_t)(configured | (suspended << 1) | (output_ble << 2) | (host << 3));
+    state = (uint8_t)(configured | (suspended << 1) | (output_code << 2) | (host << 4));
     if (state != logged_usb) {
         LOG_INF("sleep: usb configured=%d suspended=%d output=%s host=%s", configured, suspended,
-                output_ble ? "ble" : "usb", host ? "yes" : "no");
+                output, host ? "yes" : "no");
         logged_usb = state;
     }
     return host;
