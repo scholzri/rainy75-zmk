@@ -524,6 +524,155 @@ body {
   // end of Bluetooth transport
 })();
 </script>
+<!-- Section: config model -->
+<script data-core id="model">
+"use strict";
+(() => {
+  const C = globalThis.RainyCore;
+
+  /* Values, checked and shown as reverse/tools/rainy75_cfg.py does. A list
+   * entry is {key, type, a, b, ro}: type b bool, u unsigned a..b, e one of
+   * the names a, c colour 0xRRGGBB, l up to LIST_MAX of the names a, in order. */
+  const LIST_MAX = 16;
+
+  /* -> the value to send (a list without its duplicates, the first one kept),
+   * or throws an Error naming the setting. */
+  function checkValue(entry, v) {
+    const k = entry.key;
+    switch (entry.type) {
+      case "b":
+        if (typeof v !== "boolean") throw new Error(k + ": expected on or off");
+        return v;
+      case "u":
+        if (!Number.isInteger(v)) throw new Error(k + ": " + v + " is not a number");
+        if (v < entry.a || v > entry.b) throw new Error(`${k}: ${v} is outside ${entry.a}..${entry.b}`);
+        return v;
+      case "c":
+        if (!Number.isInteger(v) || v < 0 || v > 0xffffff) throw new Error(k + ": not a colour RRGGBB");
+        return v;
+      case "e":
+        if (!entry.a.includes(v)) throw new Error(`${k}: '${v}' is not one of ${entry.a.join(", ")}`);
+        return v;
+      case "l": {
+        if (!Array.isArray(v)) throw new Error(k + ": expected a list");
+        const names = v.filter((n, i) => v.indexOf(n) === i);
+        const bad = names.filter((n) => !entry.a.includes(n));
+        if (bad.length) throw new Error(`${k}: unknown ${bad.join(", ")} (known: ${entry.a.join(", ")})`);
+        if (names.length > LIST_MAX) throw new Error(`${k}: at most ${LIST_MAX} entries`);
+        return names;
+      }
+      default:
+        throw new Error(`${k}: unknown type '${entry.type}'`);
+    }
+  }
+
+  /* "#FF8000", "0xff8000" or "FF8000" -> 0xFF8000 */
+  function parseColor(text) {
+    const m = /^(?:#|0[xX])?([0-9A-Fa-f]{6})$/.exec(text);
+    if (!m) throw new Error(`'${text}' is not a colour RRGGBB (six hex digits)`);
+    return parseInt(m[1], 16);
+  }
+
+  const hex6 = (v) => v.toString(16).padStart(6, "0");
+  const formatColor = (v) => "#" + hex6(v).toUpperCase();
+  const colorInput = (v) => "#" + hex6(v); /* the form <input type=color> wants */
+
+  function formatValue(entry, v) {
+    if (entry.type === "b") return v ? "on" : "off";
+    if (entry.type === "c") return formatColor(v);
+    if (entry.type === "l") return v.join(",");
+    return String(v);
+  }
+
+  function sameValue(a, b) {
+    if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((x, i) => x === b[i]);
+    return a === b;
+  }
+
+  /* rgb.cycle as rows of a checkbox list: the listed effects first (checked,
+   * in list order), then the others (unchecked, in table order). An empty list
+   * means all effects, so all are checked. Names the page does not know
+   * (known(name) false) are not shown. */
+  function cycleRows(names, value, known) {
+    const visible = names.filter(known);
+    const listed = (value && value.length ? value : visible).filter((n) => visible.includes(n));
+    const rows = listed.map((name) => ({ name, checked: true }));
+    for (const name of visible) if (!listed.includes(name)) rows.push({ name, checked: false });
+    return rows;
+  }
+
+  /* Rows -> the list to send: the checked names in row order, then the names
+   * of the current list the page does not show, so they are kept. */
+  function cycleFromRows(rows, current, known) {
+    const v = rows.filter((r) => r.checked).map((r) => r.name);
+    for (const n of current || []) if (!known(n) && !v.includes(n)) v.push(n);
+    return v;
+  }
+
+  /* Slider sends: at most one per intervalMs and one at a time (the next waits
+   * for the reply), always the newest value; flush(v) sends v at once (after
+   * a send in flight), unless it is the value sent last. send(v) returns a
+   * Promise. clock: {now, setTimeout, clearTimeout}, for the tests. */
+  const realClock = {
+    now: () => Date.now(),
+    setTimeout: (f, ms) => setTimeout(f, ms),
+    clearTimeout: (id) => clearTimeout(id),
+  };
+
+  function makeThrottle(intervalMs, send, clock = realClock) {
+    let last = -Infinity;
+    let value;
+    let lastSent;
+    let has = false;
+    let busy = false;
+    let timer = null;
+    function run() {
+      timer = null;
+      if (!has || busy) return;
+      const wait = last + intervalMs - clock.now();
+      if (wait > 0) {
+        timer = clock.setTimeout(run, wait);
+        return;
+      }
+      const v = value;
+      has = false;
+      busy = true;
+      last = clock.now();
+      lastSent = v;
+      Promise.resolve()
+        .then(() => send(v))
+        .catch(() => {})
+        .then(() => {
+          busy = false;
+          if (has && timer === null) run();
+        });
+    }
+    return {
+      push(v) {
+        value = v;
+        has = true;
+        if (timer === null) run();
+      },
+      flush(v) {
+        if (!has && sameValue(v, lastSent)) return;
+        value = v;
+        has = true;
+        if (timer !== null) clock.clearTimeout(timer);
+        timer = null;
+        last = -Infinity;
+        run();
+      },
+      pending: () => has || busy || timer !== null,
+    };
+  }
+
+  Object.assign(C, {
+    LIST_MAX, checkValue, parseColor, formatColor, colorInput, formatValue, sameValue,
+    cycleRows, cycleFromRows, makeThrottle,
+  });
+  // end of config model
+})();
+</script>
 <!-- end of sections -->
 </body>
 </html>

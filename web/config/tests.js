@@ -433,6 +433,174 @@
     t.eq(r.push(a), [a], "after a bogus length");
   });
 
+  // ---- Task 5: values and the slider throttle ----
+
+  const FX3 = ["solid", "rainbow", "plasma"];
+  const E = {
+    on: { key: "rgb.on", type: "b", a: null, b: null, ro: false },
+    val: { key: "rgb.val", type: "u", a: 16, b: 255, ro: false },
+    effect: { key: "rgb.effect", type: "e", a: FX3, b: null, ro: false },
+    color: { key: "ind.caps_color", type: "c", a: null, b: null, ro: false },
+    cycle: { key: "rgb.cycle", type: "l", a: FX3, b: null, ro: false },
+  };
+
+  test("values: bool and number checks name the setting", (C) => {
+    t.eq(C.checkValue(E.on, true), true);
+    t.throws(() => C.checkValue(E.on, 1), /^rgb\.on: expected on or off$/);
+    t.eq(C.checkValue(E.val, 120), 120);
+    t.throws(() => C.checkValue(E.val, 300), /^rgb\.val: 300 is outside 16\.\.255$/);
+    t.throws(() => C.checkValue(E.val, 15), /outside/);
+    t.throws(() => C.checkValue(E.val, 1.5), /^rgb\.val: 1\.5 is not a number$/);
+    t.throws(() => C.checkValue({ key: "x.new", type: "x" }, 1), /unknown type 'x'/);
+  });
+
+  test("values: names", (C) => {
+    t.eq(C.checkValue(E.effect, "plasma"), "plasma");
+    t.throws(() => C.checkValue(E.effect, "fire"), /'fire' is not one of solid, rainbow, plasma/);
+  });
+
+  test("values: colours", (C) => {
+    t.eq(C.checkValue(E.color, 0xff8000), 0xff8000);
+    t.throws(() => C.checkValue(E.color, 0x1000000), /colour/);
+    t.eq(C.parseColor("#FF8000"), 0xff8000);
+    t.eq(C.parseColor("0x0000ff"), 0xff);
+    t.eq(C.parseColor("FF8000"), 0xff8000);
+    for (const bad of ["#FFF", "FFF", "#FF80001", "0x123", "GG0000", ""]) t.throws(() => C.parseColor(bad), /six hex digits/);
+    t.eq(C.formatColor(0xff8000), "#FF8000");
+    t.eq(C.colorInput(0xff), "#0000ff");
+  });
+
+  test("values: lists drop duplicates before the 16-entry limit", (C) => {
+    t.eq(C.checkValue(E.cycle, ["plasma", "solid", "plasma"]), ["plasma", "solid"]);
+    t.eq(C.checkValue(E.cycle, []), []);
+    t.throws(() => C.checkValue(E.cycle, ["solid", "fire"]), /unknown fire/);
+    const names = Array.from({ length: 17 }, (_, i) => "fx" + i);
+    const big = { key: "rgb.cycle", type: "l", a: names };
+    t.eq(C.checkValue(big, names.slice(0, 16).concat(names.slice(0, 4))), names.slice(0, 16));
+    t.throws(() => C.checkValue(big, names), /at most 16/);
+  });
+
+  test("values: shown as the CLI shows them", (C) => {
+    t.eq(C.formatValue(E.on, true), "on");
+    t.eq(C.formatValue(E.on, false), "off");
+    t.eq(C.formatValue(E.color, 0xff8000), "#FF8000");
+    t.eq(C.formatValue(E.cycle, ["a", "b"]), "a,b");
+    t.eq(C.formatValue(E.val, 120), "120");
+    t.ok(C.sameValue(["a"], ["a"]) && !C.sameValue(["a"], ["a", "b"]) && C.sameValue(3, 3));
+  });
+
+  test("cycle: rows from a list value", (C) => {
+    const all = () => true;
+    t.eq(C.cycleRows(FX3, [], all), [
+      { name: "solid", checked: true }, { name: "rainbow", checked: true }, { name: "plasma", checked: true }]);
+    t.eq(C.cycleRows(FX3, ["plasma", "solid"], all), [
+      { name: "plasma", checked: true }, { name: "solid", checked: true }, { name: "rainbow", checked: false }]);
+    const noRainbow = (n) => n !== "rainbow";
+    t.eq(C.cycleRows(FX3, ["rainbow", "plasma"], noRainbow), [
+      { name: "plasma", checked: true }, { name: "solid", checked: false }]);
+  });
+
+  test("cycle: rows back to a list, hidden names kept", (C) => {
+    const rows = [{ name: "plasma", checked: true }, { name: "solid", checked: false }];
+    t.eq(C.cycleFromRows(rows, [], () => true), ["plasma"]);
+    t.eq(C.cycleFromRows(rows, ["rainbow", "solid"], (n) => n !== "rainbow"), ["plasma", "rainbow"]);
+  });
+
+  /* A clock the tests move by hand; advance() runs the timers that fall due. */
+  function fakeClock() {
+    const c = {
+      t: 0,
+      timers: [],
+      now: () => c.t,
+      setTimeout(f, ms) {
+        const id = { f, at: c.t + ms };
+        c.timers.push(id);
+        return id;
+      },
+      clearTimeout(id) {
+        c.timers = c.timers.filter((x) => x !== id);
+      },
+      async advance(ms) {
+        const end = c.t + ms;
+        for (;;) {
+          c.timers.sort((a, b) => a.at - b.at);
+          const next = c.timers[0];
+          if (!next || next.at > end) break;
+          c.timers.shift();
+          c.t = next.at;
+          next.f();
+          await settle();
+        }
+        c.t = end;
+        await settle();
+      },
+    };
+    return c;
+  }
+
+  test("throttle: at most one send per interval, the newest value", async (C) => {
+    const clock = fakeClock();
+    const sent = [];
+    const th = C.makeThrottle(50, (v) => sent.push([clock.t, v]), clock);
+    th.push(0);
+    await settle();
+    for (const v of [10, 20, 30, 40]) {
+      await clock.advance(10);
+      th.push(v);
+    }
+    await clock.advance(10);
+    t.eq(sent, [[0, 0], [50, 40]]);
+    await clock.advance(5);
+    th.push(55);
+    await clock.advance(10);
+    th.flush(65);
+    await settle();
+    t.eq(sent, [[0, 0], [50, 40], [65, 65]], "flush sends at once, the pending 55 is replaced");
+    await clock.advance(200);
+    t.eq(sent.length, 3);
+  });
+
+  test("throttle: one send at a time", async (C) => {
+    const clock = fakeClock();
+    const sent = [];
+    let done;
+    const th = C.makeThrottle(50, (v) => {
+      sent.push(v);
+      return new Promise((resolve) => {
+        done = resolve;
+      });
+    }, clock);
+    th.push(1);
+    await settle();
+    th.push(2);
+    await clock.advance(200);
+    t.eq(sent, [1], "waits for the reply");
+    t.ok(th.pending());
+    th.flush(3);
+    await settle();
+    t.eq(sent, [1]);
+    done();
+    await settle();
+    t.eq(sent, [1, 3]);
+    done();
+    await settle();
+    t.ok(!th.pending());
+  });
+
+  test("throttle: flush of the value just sent sends nothing", async (C) => {
+    const clock = fakeClock();
+    const sent = [];
+    const th = C.makeThrottle(50, (v) => sent.push(v), clock);
+    th.push(7);
+    await settle();
+    th.flush(7);
+    await settle();
+    t.eq(sent, [7]);
+    th.flush(8);
+    await settle();
+    t.eq(sent, [7, 8]);
+  });
+
   // end of tests
 
   async function runOne(fn, C, env) {
