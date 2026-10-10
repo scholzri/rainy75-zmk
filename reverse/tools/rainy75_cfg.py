@@ -250,6 +250,8 @@ def main(argv=None):
         run(link, a)
     except FAILURES as e:  # one line, no traceback: first contact with a missing keyboard
         sys.exit(str(e) or type(e).__name__)
+    except (KeyError, TypeError, AttributeError):  # reply of the wrong shape
+        sys.exit("unexpected reply from the keyboard (missing or malformed field), try again")
     finally:
         if link is not None:
             try:

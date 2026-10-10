@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import io
 import unittest
+from unittest import mock
 
 import rainy75_cfg as c
 
@@ -227,6 +228,18 @@ class BleErrors(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             link.close()
         self.assertTrue(link.loop.is_closed())
+
+
+class OddReply(unittest.TestCase):
+    def test_wrong_shape_is_one_line(self):
+        class Link(FakeLink):
+            def close(self):
+                pass
+        with mock.patch.object(c, "SerialLink", lambda port: Link({
+                (c.READ, c.CMD_LIST, 0): {"rc": 0, "x": 1}})):
+            with self.assertRaises(SystemExit) as cm:
+                c.main(["get"])
+        self.assertIn("unexpected reply", str(cm.exception.code))
 
 
 if __name__ == "__main__":
