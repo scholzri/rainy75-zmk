@@ -8,7 +8,7 @@
 
 #define CAPS_POS         44   /* keymap position of CapsLock (&kp CLCK) */
 #define BAT_LOW_POS       0   /* keymap position of Esc: the low-battery pulse */
-#define BAT_SHOW_FRAMES  90   /* ~3s at 30fps */
+#define BAT_SHOW_FRAMES 150   /* 3 s at 50 FPS */
 #define BAT_SEG_FIRST    16   /* number row keys 1..0 = positions 16..25 */
 #define BAT_SEG_COUNT    10
 
@@ -203,7 +203,7 @@ void rrgb_overlay_render(struct rrgb *px, uint16_t n, uint32_t tick, uint8_t tin
         c = (struct rrgb){scale8(c.r, tint_v), scale8(c.g, tint_v), scale8(c.b, tint_v)};
         for (uint16_t i = 0; i < n; i++) { px[i] = mix50(px[i], c); }
     }
-    /* 3. Battery gauge: 10-segment bar on the number row, ~3s window. */
+    /* 3. Battery gauge: 10-segment bar on the number row, 3 s window. */
     if (tick < s_bat_until) {
         uint8_t lit = (uint8_t)((s_battery * BAT_SEG_COUNT + 50) / 100);  /* 0..10 */
         uint8_t hue = (uint8_t)(85 * (uint16_t)s_battery / 100);          /* 0%=red,100%=green */

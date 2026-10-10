@@ -435,32 +435,36 @@ int main(void) {
     /* battery gauge: 50% -> 5 of 10 segments lit on number row (pos 16..25) */
     memset(px, 0, sizeof(px));
     rrgb_overlay_set_battery(50);
-    rrgb_overlay_battery_show(0);              /* window until tick 90 */
-    rrgb_overlay_render(px, 83, 10, 255);           /* tick 10 < 90 -> active */
+    rrgb_overlay_battery_show(0);              /* window until tick 150 (3 s at 50 FPS) */
+    rrgb_overlay_render(px, 83, 10, 255);      /* tick 10 < 150 -> active */
     int seg0 = rrgb_led_for_position(16);      /* first segment (lit) */
     int seg9 = rrgb_led_for_position(25);      /* last segment (unlit, dim) */
     CHECK((px[seg0].r|px[seg0].g|px[seg0].b) > 30);   /* lit */
     CHECK(px[seg9].r < 20 && px[seg9].g < 20 && px[seg9].b < 20); /* dim/unlit */
+    memset(px, 0, sizeof(px));
+    rrgb_overlay_render(px, 83, 149, 255);     /* last frame of the window */
+    CHECK((px[seg0].r|px[seg0].g|px[seg0].b) > 30);
 
     /* gauge window expires */
     memset(px, 0, sizeof(px));
-    rrgb_overlay_render(px, 83, 100, 255);          /* tick 100 >= 90 -> no gauge */
+    rrgb_overlay_render(px, 83, 150, 255);     /* tick 150 -> no gauge */
     CHECK((px[seg0].r|px[seg0].g|px[seg0].b) == 0);
 
     /* rrgb_overlay_active: true while caps/fn/battery-window, else false
        (so indicators render even when decorative RGB is off) */
     rrgb_overlay_set_caps(false);
     rrgb_overlay_set_fn(false);
-    rrgb_overlay_battery_show(0);              /* window until tick 90 */
+    rrgb_overlay_battery_show(0);              /* window until tick 150 */
     CHECK(rrgb_overlay_active(10));            /* battery window open */
-    CHECK(!rrgb_overlay_active(100));          /* window closed, nothing else */
+    CHECK(rrgb_overlay_active(149));
+    CHECK(!rrgb_overlay_active(150));          /* window closed, nothing else */
     rrgb_overlay_set_caps(true);
-    CHECK(rrgb_overlay_active(100));           /* caps */
+    CHECK(rrgb_overlay_active(150));           /* caps */
     rrgb_overlay_set_caps(false);
     rrgb_overlay_set_fn(true);
-    CHECK(rrgb_overlay_active(100));           /* fn */
+    CHECK(rrgb_overlay_active(150));           /* fn */
     rrgb_overlay_set_fn(false);
-    CHECK(!rrgb_overlay_active(100));          /* nothing active */
+    CHECK(!rrgb_overlay_active(150));          /* nothing active */
 
     test_ble();
     test_effect_gain();

@@ -14,7 +14,7 @@ void rrgb_overlay_init(bool ble);
 void rrgb_overlay_set_caps(bool on);
 void rrgb_overlay_set_fn(bool active);
 void rrgb_overlay_set_battery(uint8_t pct);
-void rrgb_overlay_battery_show(uint32_t tick);   /* start the ~3s gauge window */
+void rrgb_overlay_battery_show(uint32_t tick);   /* start the 3 s gauge window */
 
 /* --- Indicator settings (config/cfg_table.c pushes them from the settings
  * registry; the defaults named here also hold without CONFIG_RAINY75_CONFIG) */
