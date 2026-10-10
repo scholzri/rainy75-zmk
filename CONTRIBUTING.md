@@ -36,6 +36,7 @@ Build and test:
 ./zmk/src/rainy_rgb/tests/run_host_tests.sh     # host unit tests: lighting engine (color/effects/overlay/lighting/ble_status)
 ./zmk/src/config/tests/run_host_tests.sh        # host unit tests: runtime settings (registry, codec, table)
 ./zmk/src/os_key/tests/run_host_tests.sh        # host unit tests: OS key behavior (Win/Mac swap, GUI lock)
+./zmk/src/sleep/tests/run_host_tests.sh         # host unit tests: sleep trigger (kb.sleep_min, USB host)
 ./zmk/src/ble_open_profile/tests/run_host_tests.sh   # host unit tests: open profile timeout
 ./zmk/drivers/bluetooth/openll/tests/run_host_tests.sh   # host unit tests: open BLE link layer
 (cd reverse/tools && python3 -m unittest test_rainy75_cfg test_rainy75_dfu test_rainy75_rgb test_openll_stats test_ble_adv_report)
@@ -57,6 +58,7 @@ zmk/drivers/            # BLE / USB / LED-strip / battery / watchdog
 zmk/src/rainy_rgb/      # custom RGB lighting engine (host-tested)
 zmk/src/config/         # runtime settings: registry, codec, table, storage, mcumgr group 67 (host-tested)
 zmk/src/os_key/         # OS key decisions: Win/Mac swap, GUI lock (host-tested)
+zmk/src/sleep/          # deep sleep trigger: kb.sleep_min, kb.sleep_on_usb (host-tested)
 web/config/             # config page: one HTML file, no build step (Node and browser tests)
 conf/                   # app / mcuboot / ota-bridge config overlays
 patches/                # minimal upstream patches, applied by build.sh
@@ -78,9 +80,9 @@ Keep this boundary: prefer a new file under `zmk/` over editing fetched sources 
 ## Testing & verification
 
 - **Host tests must pass:** the `run_host_tests.sh` of the part you touch (lighting engine,
-  runtime settings, OS key, open BLE controller), the Python tests for anything under
-  `reverse/tools/`, and `node web/config/test-node.mjs` plus `web/config/test.html` for the
-  config page.
+  runtime settings, OS key, sleep trigger, open BLE controller), the Python tests for
+  anything under `reverse/tools/`, and `node web/config/test-node.mjs` plus
+  `web/config/test.html` for the config page.
 - **Builds must be clean:** `./build.sh -a --iso` (and `--ansi` if you touched the layout).
 - **Hardware-affecting changes** (drivers, pins, timing, power, BLE) should be verified on
   a real board, and the PR should say how (what you observed: USB enumerates, BLE pairs,

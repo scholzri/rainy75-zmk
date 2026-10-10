@@ -184,7 +184,7 @@ load at boot) and never runs `fetch_ble_blob.sh`. `--blob` appends
 `conf/blob.conf` instead and is the only path that fetches the blob.
 `--privacy` appends `conf/privacy.conf` and is refused with `--blob`.
 `--openll` is still accepted as a no-op alias (it prints a note). Deep sleep
-(`CONFIG_ZMK_SLEEP=y`, 15 minute idle timeout) works with both controllers.
+(`CONFIG_RAINY75_SLEEP=y`, 15 minutes by default, `kb.sleep_min`) works with both controllers.
 
 Image sizes from the "Memory region" summary (ISO, normal sleep, HEAD of
 slice 7):
