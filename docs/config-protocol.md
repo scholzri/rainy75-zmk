@@ -4,7 +4,7 @@ The keyboard's runtime settings are read and written over mcumgr (SMP) group 67,
 on the same transports as firmware updates: the USB console port (interface 0) and
 Bluetooth (SMP GATT service `8d53dc1d-1db7-4cd3-868b-8a527460aa84`, characteristic
 `da2e7828-fbce-4e01-ae9e-261174997c48`). Clients: `reverse/tools/rainy75_cfg.py` and the
-config page.
+config page (`web/config/`); users: [config.md](config.md).
 
 Firmware: `zmk/src/config/` (registry `cfg_registry.c`, table `cfg_table.c`, storage
 `cfg_store.c` with its stored form in `cfg_codec.c`, this protocol `cfg_mgmt.c`), enabled
