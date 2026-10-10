@@ -15,7 +15,10 @@
  * &os_key behavior (os_key/os_key.h). The owners start with the same
  * defaults, so a build without CONFIG_RAINY75_CONFIG behaves like a fresh
  * keyboard. kb.os_keys is read-only: it counts the key positions bound to
- * &os_key in the live keymap on every read and is not stored.
+ * &os_key in the live keymap on every read and is not stored. kb.sleep_min
+ * and kb.sleep_on_usb are stored and read by the sleep trigger
+ * (sleep/sleep_adapter.c) at every check, once a second; builds without the
+ * trigger (test images, ZMK's own sleep) keep them without effect.
  */
 
 #include <zephyr/init.h>
@@ -32,6 +35,7 @@
 #include "rainy_rgb/engine.h"
 #include "rainy_rgb/lighting.h"
 #include "rainy_rgb/overlay.h"
+#include "sleep/sleep_policy.h"
 
 LOG_MODULE_REGISTER(cfg_table, CONFIG_LOG_DEFAULT_LEVEL);
 
@@ -122,6 +126,14 @@ static const struct cfg_def table[CFG_ID_COUNT] = {
                         .flags = CFG_F_RO | CFG_F_PROXY,
                         .max = OS_KEY_COUNT_MAX,
                         .get = os_keys_get},
+    /* Read by the sleep trigger at every check: no notify. */
+    [CFG_KB_SLEEP_MIN] = {.key = "kb.sleep_min",
+                          .type = CFG_UINT,
+                          .max = SLEEP_POLICY_MIN_MAX,
+                          .def = SLEEP_POLICY_MIN_DEFAULT},
+    [CFG_KB_SLEEP_ON_USB] = {.key = "kb.sleep_on_usb",
+                             .type = CFG_BOOL,
+                             .def = SLEEP_POLICY_ON_USB_DEFAULT},
 };
 
 static uint32_t vals[CFG_ID_COUNT];

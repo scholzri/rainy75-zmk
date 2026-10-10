@@ -14,7 +14,8 @@
  * stubbed here (bound); without it kb.os_keys reads 0 and the two sets must
  * still do nothing else. The two hooks cfg_table.c provides to the engine
  * (rrgb_cycle_next_hook, rrgb_state_changed_hook) are called directly.
- * run_host_tests.sh builds every variant.
+ * kb.sleep_min and kb.sleep_on_usb have no owner to notify: the sleep
+ * trigger reads them at every check. run_host_tests.sh builds every variant.
  */
 
 #include <errno.h>
@@ -140,6 +141,8 @@ static const char *const keys[CFG_ID_COUNT] = {
     [CFG_KB_OS] = "kb.os",
     [CFG_KB_GUI_LOCK] = "kb.gui_lock",
     [CFG_KB_OS_KEYS] = "kb.os_keys",
+    [CFG_KB_SLEEP_MIN] = "kb.sleep_min",
+    [CFG_KB_SLEEP_ON_USB] = "kb.sleep_on_usb",
 };
 
 static void test_accepted(void) {
@@ -258,6 +261,39 @@ static void test_kb(void) {
     CHECK(cfg_set(CFG_KB_OS, &v, NULL) == -EINVAL); /* win and mac only */
 }
 
+/* kb.sleep_min and kb.sleep_on_usb: stored, read by the sleep trigger at
+ * every check (sleep/sleep_adapter.c), so no owner is notified and the
+ * lighting idle timer does not restart; every change bumps rev, which the
+ * trigger counts as activity. */
+static void test_sleep(void) {
+    const struct cfg_def *m = cfg_def(CFG_KB_SLEEP_MIN), *u = cfg_def(CFG_KB_SLEEP_ON_USB);
+    struct cfg_value v = U(121);
+    int before = activity;
+    uint32_t rev, dirty;
+
+    CHECK(m->type == CFG_UINT && m->min == 0 && m->max == 120 && m->flags == 0 && !m->notify);
+    CHECK(u->type == CFG_BOOL && u->flags == 0 && !u->notify);
+    CHECK(cfg_u(CFG_KB_SLEEP_MIN) == 15 && cfg_u(CFG_KB_SLEEP_ON_USB) == 0);
+    (void)cfg_take_dirty();
+    rev = cfg_rev();
+    CHECK(cfg_set(CFG_KB_SLEEP_MIN, &v, NULL) == -EINVAL && cfg_u(CFG_KB_SLEEP_MIN) == 15);
+    v = U(0); /* never */
+    CHECK(cfg_set(CFG_KB_SLEEP_MIN, &v, NULL) == 0 && cfg_u(CFG_KB_SLEEP_MIN) == 0);
+    v = U(120);
+    CHECK(cfg_set(CFG_KB_SLEEP_MIN, &v, NULL) == 0 && cfg_u(CFG_KB_SLEEP_MIN) == 120);
+    v = U(2);
+    CHECK(cfg_set(CFG_KB_SLEEP_ON_USB, &v, NULL) == -EINVAL);
+    v = U(1);
+    CHECK(cfg_set(CFG_KB_SLEEP_ON_USB, &v, NULL) == 0 && cfg_u(CFG_KB_SLEEP_ON_USB) == 1);
+    CHECK(cfg_rev() == rev + 3); /* the refused sets change nothing */
+    dirty = cfg_take_dirty();
+    CHECK((dirty & (1u << CFG_KB_SLEEP_MIN)) && (dirty & (1u << CFG_KB_SLEEP_ON_USB))); /* stored */
+    CHECK(cfg_reset(CFG_KB_SLEEP_MIN) == 0 && cfg_reset(CFG_KB_SLEEP_ON_USB) == 0);
+    CHECK(cfg_is_default(CFG_KB_SLEEP_MIN) && cfg_is_default(CFG_KB_SLEEP_ON_USB));
+    CHECK(cfg_u(CFG_KB_SLEEP_MIN) == 15 && cfg_u(CFG_KB_SLEEP_ON_USB) == 0);
+    CHECK(activity == before); /* not lighting settings */
+}
+
 /* The two hooks the engine calls (engine.c has weak defaults): Fn+Enter picks
  * the next effect of rgb.cycle, and a changed state record bumps rev. */
 static void test_hooks(void) {
@@ -309,6 +345,7 @@ int main(void) {
         test_set_reaches_owner();
         test_boot_effect();
         test_kb();
+        test_sleep();
         test_hooks();
     }
     if (failed) {
