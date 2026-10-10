@@ -1,6 +1,7 @@
 #include <behaviors.dtsi>
 #include <rainy_rgb.dtsi>
 #include <rainy75_ble.dtsi>
+#include <rainy75_os_key.dtsi>
 #include <dt-bindings/rainy_rgb.h>
 #include <dt-bindings/zmk/keys.h>
 #include <dt-bindings/zmk/bt.h>
@@ -48,6 +49,8 @@
 			 * |------+----+----+----+----+----+----+----+----+----+----+----+----+----+----|
 			 * |LCTRL|LGUI|LALT|              SPACE             |RALT| Fn |RCTL|LEFT|DOWN|RGHT|
 			 * `------+----+----+----+----+----+----+----+----+----+----+----+----+----+----'
+			 * LGUI / LALT are &os_key: Win and Alt, or Option and Command with the
+			 * setting kb.os mac; kb.gui_lock silences the GUI key (docs/usage.md).
 			 */
 			bindings = <
 				&kp ESC   &kp F1   &kp F2   &kp F3  &kp F4  &kp F5  &kp F6  &kp F7  &kp F8  &kp F9    &kp F10   &kp F11   &kp F12   &kp DEL   &kp HOME
@@ -55,7 +58,7 @@
 				&kp TAB   &kp Q    &kp W    &kp E   &kp R   &kp T   &kp Y   &kp U   &kp I   &kp O     &kp P     &kp LBKT  &kp RBKT  K_ENTER_TOP
 				&kp CLCK  &kp A    &kp S    &kp D   &kp F   &kp G   &kp H   &kp J   &kp K   &kp L     &kp SEMI  &kp SQT   K_HASH             &kp PG_UP &kp PG_DN
 				&kp LSHFT K_LT_GT  &kp Z    &kp X   &kp C   &kp V   &kp B   &kp N   &kp M   &kp COMMA &kp DOT   &kp FSLH            &kp RSHFT &kp UP
-				&kp LCTRL &kp LGUI &kp LALT                                          &kp SPACE &kp RALT &mo 1     &kp RCTRL           &kp LEFT  &kp DOWN  &kp RIGHT
+				&kp LCTRL &os_key LGUI &os_key LALT                                  &kp SPACE &kp RALT &mo 1     &kp RCTRL           &kp LEFT  &kp DOWN  &kp RIGHT
 			>;
 		};
 

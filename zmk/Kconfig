@@ -128,6 +128,21 @@ config RAINY75_CONFIG
 	  settings subtree rainy_cfg. See docs/config-protocol.md and
 	  reverse/tools/rainy75_cfg.py.
 
+config RAINY75_OS_KEY
+	bool "&os_key behavior: GUI / Alt key per kb.os and kb.gui_lock"
+	default y
+	depends on DT_HAS_RAINY_BEHAVIOR_OS_KEY_ENABLED
+	help
+	  &os_key LGUI / &os_key LALT, the default keymap's left GUI and Alt
+	  keys. With the runtime setting kb.os mac the two swap (Option and
+	  Command in the order of a Mac keyboard); with kb.gui_lock the key
+	  that would send GUI sends nothing. Without RAINY75_CONFIG they are
+	  plain GUI and Alt keys. Built whenever the keymap includes
+	  rainy75_os_key.dtsi. src/behaviors/behavior_os_key.c, decisions in
+	  src/os_key/. Turning it off leaves the &os_key keys of the default
+	  keymap (left Win and left Alt) without function, so replace them with
+	  &kp LGUI / &kp LALT first.
+
 config RAINY_RGB_ANSI_LEDMAP
 	bool "ANSI LED map (strip has no LED at the ISO <> slot)"
 	depends on RAINY_RGB

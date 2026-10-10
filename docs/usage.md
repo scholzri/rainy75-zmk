@@ -25,6 +25,32 @@ combos below.
 
 Full RGB details: [rainy-rgb.md](rainy-rgb.md).
 
+## Windows and Mac
+
+The left **Win** and **Alt** keys follow two settings. Change them over USB with
+`python3 reverse/tools/rainy75_cfg.py set KEY VALUE` (for Bluetooth put `--ble` before
+`set`), for example `set kb.os mac`:
+
+| Settings | Left Win key position | Left Alt key position |
+|---|---|---|
+| `kb.os win` (default) | Win | Alt |
+| `kb.os mac` | Option | Command |
+| `kb.os win`, `kb.gui_lock on` | nothing | Alt |
+| `kb.os mac`, `kb.gui_lock on` | Option | nothing |
+
+With `kb.os mac` the bottom row reads Ctrl, Option, Command, Space, as on a Mac keyboard.
+`kb.gui_lock on` silences the GUI key (Win, or Command on a Mac), for example while gaming.
+Right Alt stays AltGr. A change applies from the next keypress; a key held while it changes
+is released correctly. The settings are stored and survive a restart.
+
+Both keys use the **OS Key** behavior (`&os_key`). ZMK Studio shows it with the choices
+"Win (Option on a Mac)" and "Alt (Command on a Mac)". A key you bind to something else in
+Studio no longer follows the settings; `python3 reverse/tools/rainy75_cfg.py get kb.os_keys`
+shows how many keys use the OS Key behavior (2 with the default keymap). To get the behavior
+back on a key you rebound, choose "OS Key" for it again in Studio and save; "Restore Stock
+Settings" in Studio restores both keys too, but it also drops every other edit you saved in
+Studio.
+
 ## Bluetooth and USB
 
 The keyboard remembers **three Bluetooth hosts** (profiles 1, 2 and 3 on F1, F2 and F3)

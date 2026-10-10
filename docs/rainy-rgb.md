@@ -225,7 +225,7 @@ this a quickly released Fn left the reactive afterglow on the pressed F-key.
 **Effect off during BLE connecting / switching / pairing.** While
 `ble_status` shows any automatic animation (no Fn needed), the normal effect is
 off and the board is dark except the BLE indicators and the other functional
-overlays (CapsLock, Fn-highlight, battery gauge): the switch confirm, the
+overlays (CapsLock in the key style, Fn-highlight, battery gauge): the switch confirm, the
 connected solid + fade, every red flash (lost, failed, cleared, open slot
 timeout, also on a background slot), the active slot's fast blink or breathe
 only while it is shown (BLE output, 30 s hold window, as gated above), the
@@ -281,9 +281,8 @@ back at once. A change of a lighting or indicator setting from a host (`rainy75_
 set`, the config page) restarts the timer too, so the change shows: the six state-record
 settings (`rgb.on`, `rgb.effect`, `rgb.hue`, `rgb.sat`, `rgb.val`, `rgb.speed`),
 `rgb.val_battery`, `rgb.idle_*` and `ind.*`; `rgb.cycle` and `rgb.boot_effect` do not. The
-functional overlays (CapsLock,
-Fn-highlight, battery gauge, BLE status and passkey guidance) keep showing while idle
-(the CapsLock tint only with `dim`, it needs the effect);
+functional overlays (CapsLock, Fn-highlight, battery gauge, BLE status and passkey guidance)
+keep showing while idle (the CapsLock tint only with `dim`, it needs the effect);
 host direct mode (`rgb_mgmt`) overrides idle off, so a host notification pulse still shows
 when the board is idle (that's when you're away). With idle off and no overlay active the
 strip is dark and the LED rail is cut after 2 s, as with RGB off. The timer is rainy_rgb's
@@ -414,7 +413,7 @@ same SMP transport as DFU (USB CDC-ACM serial). Group 65, four commands:
 Positions are **keymap positions** (0..82, row-major), translated through
 `led_map` on the device — the same host code works on ISO and ANSI boards.
 Host mode is not persisted (reboot/deep sleep return to the normal effect),
-functional overlays (CapsLock / Fn-highlight / battery / BLE status) still
+functional overlays (CapsLock in the key style / Fn-highlight / battery / BLE status) still
 render on top, host frames are not blanked during BLE connecting or pairing
 (only the normal effect is),
 and **any physical Fn+RGB control exits host mode** — a stray script can never

@@ -10,9 +10,12 @@
  * (cfg_table_loaded), rgb.cycle when Fn+Enter is pressed
  * (rrgb_cycle_next_hook), and the rest is pushed to its owner by push(),
  * the per-owner change callback (cfg_def.notify), after init and after
- * every set, reset and load. The owners (rainy_rgb engine, overlay,
- * ble_status) start with the same defaults, so a build without
- * CONFIG_RAINY75_CONFIG behaves like a fresh keyboard.
+ * every set, reset and load: the lighting and indicator settings to the
+ * rainy_rgb engine, overlay and ble_status, kb.os and kb.gui_lock to the
+ * &os_key behavior (os_key/os_key.h). The owners start with the same
+ * defaults, so a build without CONFIG_RAINY75_CONFIG behaves like a fresh
+ * keyboard. kb.os_keys is read-only: it counts the key positions bound to
+ * &os_key in the live keymap on every read and is not stored.
  */
 
 #include <zephyr/init.h>
@@ -23,6 +26,7 @@
 
 #include "cfg_registry.h"
 #include "cfg_table.h"
+#include "os_key/os_key.h"
 #include "rainy_rgb/ble_status.h"
 #include "rainy_rgb/effects.h"
 #include "rainy_rgb/engine.h"
@@ -49,6 +53,24 @@ static const char *caps_style_name(uint8_t idx) {
     static const char *const names[] = {"key", "tint", "off"};
 
     return idx < ARRAY_SIZE(names) ? names[idx] : NULL;
+}
+
+/* In the order of enum os_key_os (os_key/os_key.h). */
+static const char *os_name(uint8_t idx) {
+    static const char *const names[] = {"win", "mac"};
+
+    return idx < ARRAY_SIZE(names) ? names[idx] : NULL;
+}
+
+/* kb.os_keys: counted on every read, so it needs no RAM and follows every
+ * keymap change; 0 in a build without the &os_key behavior. */
+static uint32_t os_keys_get(uint8_t arg) {
+    ARG_UNUSED(arg);
+#ifdef CONFIG_RAINY75_OS_KEY
+    return os_key_bound_count();
+#else
+    return 0;
+#endif
 }
 
 static void push(uint8_t i);
@@ -93,6 +115,13 @@ static const struct cfg_def table[CFG_ID_COUNT] = {
     [CFG_IND_FN_HIGHLIGHT] = OWNED("ind.fn_highlight", CFG_BOOL, 0, 1, 1, NULL),
     [CFG_IND_PASSKEY_GUIDE] = OWNED("ind.passkey_guide", CFG_BOOL, 0, 1, 1, NULL),
     [CFG_IND_BAT_LOW] = OWNED("ind.bat_low", CFG_UINT, 0, 50, 0, NULL),
+    [CFG_KB_OS] = OWNED("kb.os", CFG_ENUM, 0, 0, OS_KEY_OS_WIN, os_name),
+    [CFG_KB_GUI_LOCK] = OWNED("kb.gui_lock", CFG_BOOL, 0, 1, 0, NULL),
+    [CFG_KB_OS_KEYS] = {.key = "kb.os_keys",
+                        .type = CFG_UINT,
+                        .flags = CFG_F_RO | CFG_F_PROXY,
+                        .max = OS_KEY_COUNT_MAX,
+                        .get = os_keys_get},
 };
 
 static uint32_t vals[CFG_ID_COUNT];
@@ -130,6 +159,12 @@ static void push(uint8_t i) {
     case CFG_IND_BAT_LOW:
         rrgb_overlay_set_bat_low((uint8_t)cfg_u(i));
         break;
+    case CFG_KB_OS:
+    case CFG_KB_GUI_LOCK:
+#ifdef CONFIG_RAINY75_OS_KEY
+        os_key_set_mode((uint8_t)cfg_u(CFG_KB_OS), cfg_u(CFG_KB_GUI_LOCK) != 0);
+#endif
+        return; /* not a lighting setting: the idle timer keeps running */
     default:
         return;
     }

@@ -48,10 +48,18 @@ static void proxy_set(uint8_t arg, uint32_t v) {
     proxy_sets++;
 }
 
-/* The owners of the other settings: change notifications by index. */
+/* The owners of the other settings: change notifications by index, and the
+ * value a scalar setting's owner read with cfg_u() when it was notified (not
+ * for the list: test_list_lock counts its lock calls). */
 static int notified[8];
+static uint32_t notified_u[8];
 
-static void note(uint8_t i) { notified[i]++; }
+static void note(uint8_t i) {
+    notified[i]++;
+    if (cfg_def(i)->type != CFG_LIST) {
+        notified_u[i] = cfg_u(i);
+    }
+}
 
 /* A lock that counts and checks the key it hands out. */
 static int locks, unlocks, bad_keys;
@@ -100,6 +108,7 @@ static void setup(void) {
     proxy_val[3] = 5;
     proxy_sets = 0;
     memset(notified, 0, sizeof(notified));
+    memset(notified_u, 0, sizeof(notified_u));
     cfg_set_lock(NULL, NULL);
     CHECK(cfg_init(defs, T_N, vals, lists, 1) == 0);
 }
@@ -357,6 +366,7 @@ static void test_notify(void) {
     /* init reports every non-proxied default to its owner */
     CHECK(notified[T_NUM] == 1 && notified[T_COL] == 1 && notified[T_LIST] == 1);
     CHECK(cfg_set(T_NUM, &v, NULL) == 0 && notified[T_NUM] == 2);
+    CHECK(notified_u[T_NUM] == 12); /* the owner reads the new value in its callback */
     CHECK(cfg_set(T_NUM, &bad, NULL) == -EINVAL && notified[T_NUM] == 2); /* refused: no news */
     CHECK(cfg_load(T_NUM, &v) == 0 && notified[T_NUM] == 3);
     CHECK(cfg_reset(T_NUM) == 0 && notified[T_NUM] == 4);

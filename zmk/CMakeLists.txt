@@ -84,6 +84,19 @@ if(CONFIG_RAINY_RGB)
   )
 endif()
 
+# &os_key (src/behaviors/behavior_os_key.c): GUI / Alt per the settings
+# kb.os and kb.gui_lock, decisions in src/os_key/ (host tested).
+if(CONFIG_RAINY75_OS_KEY)
+  zephyr_library_named(rainy75_os_key)
+  zephyr_library_include_directories(
+    ${APPLICATION_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  zephyr_library_sources(
+    src/os_key/os_key.c
+    src/behaviors/behavior_os_key.c
+  )
+endif()
+
 # BLE policy on top of ZMK's public API: the &bt_sel_ble behavior and the
 # open profile timeout (see docs/zmk-firmware.md, "BLE policy module").
 if(CONFIG_ZMK_BLE)

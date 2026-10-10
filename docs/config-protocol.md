@@ -8,7 +8,8 @@ config page.
 
 Firmware: `zmk/src/config/` (registry `cfg_registry.c`, table `cfg_table.c`, storage
 `cfg_store.c` with its stored form in `cfg_codec.c`, this protocol `cfg_mgmt.c`), enabled
-with `CONFIG_RAINY75_CONFIG`.
+with `CONFIG_RAINY75_CONFIG`. The `kb.os*` and `kb.gui_lock` settings act on the `&os_key`
+behavior (`zmk/src/behaviors/behavior_os_key.c`, decisions in `zmk/src/os_key/`).
 
 ## Commands
 
@@ -32,7 +33,10 @@ with `CONFIG_RAINY75_CONFIG`.
   source (host, Fn keys). Hosts poll `info` and re-read values when `rev` changes. `rev`
   is not persistent: it restarts at 0 on every boot (loading `rgb.boot_effect` can already
   count as one change), so clients compare it for inequality only and re-read everything
-  after any (re)connect.
+  after any (re)connect. The one exception is `kb.os_keys`: it follows keymap edits
+  (a ZMK Studio set, save or discard, Restore Stock Settings) without a `rev` change, so a
+  client reads it explicitly (on connect, when it shows the Keyboard section or its warning,
+  or periodically) and never waits for `rev` to announce it.
 - `list` / `get` page: a reply holds as many entries as fit one mcumgr buffer (512 bytes),
   at least one; `next` is the index to ask for next, absent on the last page. `i` past the
   end gives an empty page (`s: []` or `v: {}`) and no `next`. The page size is an internal
@@ -52,6 +56,8 @@ with `CONFIG_RAINY75_CONFIG`.
   lighting and indicator settings (`rgb.val_battery`, `rgb.idle_s`, `rgb.idle_mode`,
   `ind.*`) also restart the lighting idle timer (`rgb.idle_s`), so a change shows on an idle
   board. `rgb.boot_effect` takes effect at the next boot, `rgb.cycle` at the next Fn+Enter.
+  `kb.os` and `kb.gui_lock` apply from the next press of an `&os_key` key (a key held during
+  the change releases what it pressed); they do not restart the idle timer.
 - `reset` with keys checks all of them first (unknown: `ENOENT`, read-only:
   `EACCESSDENIED`) and resets none if one fails. Should resetting a checked key still fail
   (defaults are validated at boot, so this is not expected), the remaining keys are reset
@@ -110,6 +116,9 @@ read).
 | `ind.fn_highlight` | b | | on | `rainy_cfg/ind.fn_highlight` |
 | `ind.passkey_guide` | b | | on | `rainy_cfg/ind.passkey_guide` |
 | `ind.bat_low` | u | 0..50 (%, 0 = off) | 0 | `rainy_cfg/ind.bat_low` |
+| `kb.os` | e | `win`, `mac` | `win` | `rainy_cfg/kb.os` |
+| `kb.gui_lock` | b | | off | `rainy_cfg/kb.gui_lock` |
+| `kb.os_keys` | u, read-only | 0..83 | (counted) | not stored |
 
 - `rgb.boot_effect`: the effect shown after power-on; `last` keeps the effect last chosen.
   A fixed boot effect is shown without being saved, so switching back to `last` brings
@@ -152,6 +161,20 @@ read).
   red (2 s period) on top of the effect; 0 = off. It shows only while the effect is drawn
   (RGB on, not idle `off`, not host pixel mode, not during a Bluetooth animation), and a
   battery level of 0 (no reading yet) never pulses.
+- `kb.os` / `kb.gui_lock`: the keys bound to `&os_key LGUI` and `&os_key LALT` (in the
+  default keymap the left Win and left Alt keys) send GUI and Alt with `win`. With `mac` the
+  two swap, so the Win key position sends Option (Alt) and the Alt position Command (GUI),
+  as on a Mac keyboard. With `kb.gui_lock` on, the key that would send GUI sends nothing
+  (the Win key with `win`, the Command key with `mac`). Right Alt stays AltGr. At most 4
+  `&os_key` keys are held at once; a fifth sends nothing.
+- `kb.os_keys`: read-only (flags bit 0), the number of key positions bound to `&os_key` on
+  any layer of the live keymap, counted on every read, so it follows ZMK Studio edits at once
+  (saved or not). 2 with the default keymap; 0 means no key follows `kb.os` and
+  `kb.gui_lock` (for example both keys rebound in ZMK Studio), and clients can warn then.
+  Keymap edits do not change `rev` (no setting changed, only the keymap it counts), so
+  this is the one setting a client has to read explicitly instead of waiting for `rev`: on
+  connect, when it shows the Keyboard section or the warning, or periodically.
+  `set` and `reset` with it give `EACCESSDENIED`; a `reset` of all settings skips it.
 
 ## Storage
 
