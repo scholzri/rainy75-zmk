@@ -1,0 +1,3 @@
+description: GUI or Alt key as the settings kb.os and kb.gui_lock say (parameter LGUI or LALT)
+compatible: "rainy,behavior-os-key"
+include: one_param.yaml

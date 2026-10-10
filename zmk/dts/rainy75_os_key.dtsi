@@ -1,0 +1,11 @@
+/ {
+    behaviors {
+        /* &os_key LGUI / &os_key LALT: GUI or Alt as the runtime settings
+         * kb.os and kb.gui_lock say (src/behaviors/behavior_os_key.c) */
+        os_key: os_key {
+            compatible = "rainy,behavior-os-key";
+            #binding-cells = <1>;
+            display-name = "OS Key";
+        };
+    };
+};
