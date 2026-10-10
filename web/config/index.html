@@ -1729,9 +1729,9 @@ button.mv { padding: .1rem .5rem; }
   ];
 
   const secs = (v) => (v < 60 ? v + " s" : Math.floor(v / 60) + " min" + (v % 60 ? " " + (v % 60) + " s" : ""));
-  /* The known limit of "USB host connected" (docs/config-protocol.md). */
-  const usbLimit = (what) => "If the computer put USB to sleep and the cable is then pulled, " + what +
-    " may not apply until the next USB event.";
+  /* When "USB host connected" ends after a cable pull (docs/config-protocol.md). */
+  const usbLimit = (what) => "After a cable pull " + what + " applies within about a second with the " +
+    "output on Bluetooth, and from the next key press with the output on USB.";
 
   const SETTINGS = [
     { key: "rgb.on", type: "b", label: "Lighting on",

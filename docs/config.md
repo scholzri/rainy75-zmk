@@ -196,10 +196,11 @@ the top row to the bottom), `heatmap` (keys glow when pressed and cool down over
 one LED and steps to the next on each key press). Details: [rainy-rgb.md](rainy-rgb.md).
 
 "No USB host connected" means no computer has set up the keyboard over USB; a computer
-that sleeps still counts as connected. Known limit: if the computer put USB to sleep and
-the cable is then pulled, the keyboard can still count as connected (no cap, no low-battery
-pulse) until the next USB event; with output USB the first key press clears it, with output
-Bluetooth it can persist.
+that sleeps still counts as connected, except while the output is Bluetooth: then a USB bus
+the computer put to sleep counts as no host (the board dims while the computer sleeps). The
+keyboard cannot sense the cable itself, and a pull can look like a computer going to sleep:
+with the output on Bluetooth the cap and the low-battery pulse apply within about a second
+of the pull, with the output on USB from the next key press (a few seconds after the pull).
 
 ### Indicators
 
@@ -221,9 +222,9 @@ Bluetooth it can persist.
 | `kb.sleep_min` (Sleep after) | 0 to 120 min | 15 | Minutes without a key press until the keyboard sleeps; 0 = never. A settings change (from the page, `rainy75_cfg.py` or the Fn keys) counts as a key press; an open page alone does not keep it awake. Not while a USB host is connected, unless `kb.sleep_on_usb` is on. Any key wakes it; typing works again after about 5 s. |
 | `kb.sleep_on_usb` (Sleep on USB) | on, off | off | Also sleep while a USB host is connected. Off: on USB the keyboard stays awake, also while the computer sleeps, so a key press can wake the computer; but it still sleeps while it types over Bluetooth to another device and the computer has had USB asleep for about a minute, because a key press then goes to that device. |
 
-Sleep and USB: "USB host connected" means the same as for the brightness cap above, with
-the same known limit: pulled from a sleeping computer, the keyboard can stay awake until a
-key is pressed with the output on USB, or it is plugged in again. One difference: while
+Sleep and USB: "USB host connected" means a computer set up the keyboard over USB, also
+while it sleeps. Known limit: pulled from a sleeping computer, the keyboard can stay awake
+until a key is pressed with the output on USB, or it is plugged in again. One difference: while
 the keyboard types over Bluetooth to another device and the computer has had USB asleep
 for about a minute, the computer does not keep the keyboard awake (a key press goes to the
 other device and could not wake the computer anyway), so it sleeps then, if the keyboard
