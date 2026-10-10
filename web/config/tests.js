@@ -1168,6 +1168,8 @@
     t.ok(/Fn\+B/.test(help("ind.bat_low")) && /lighting off/.test(help("ind.bat_low")));
     t.ok(/only while the effect is drawn/.test(help("ind.caps_style")));
     t.ok(/USB to sleep/.test(help("rgb.val_battery")) && /USB to sleep/.test(help("ind.bat_low")));
+    t.ok(/settings change/.test(help("kb.sleep_min")) && /open page/.test(help("kb.sleep_min")));
+    t.ok(/Bluetooth/.test(help("kb.sleep_on_usb")) && /USB to sleep/.test(help("kb.sleep_on_usb")));
     t.ok(/ZMK Studio/.test(C.OS_KEYS_WARNING));
   });
 
