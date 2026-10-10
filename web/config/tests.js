@@ -601,6 +601,169 @@
     t.eq(sent, [7, 8]);
   });
 
+  // ---- Task 6: the simulated keyboard ----
+
+  /* One request to a SimKeyboard -> the decoded reply body. */
+  const ask = (C, sim, op, cmd, body, group = 67) => C.smpParse(sim.handle(C.smpRequest(op, group, cmd, 0, body))).body;
+  const R = 0;
+  const W = 2;
+
+  test("sim: info, and replies in indefinite length", (C) => {
+    const sim = new C.SimKeyboard();
+    const raw = sim.handle(C.smpRequest(R, 67, 0, 5, {}));
+    t.eq([raw[0], raw[6], raw[8]], [1, 5, 0xbf], "read reply, same seq, indefinite map");
+    const r = ask(C, sim, R, 0, {});
+    t.eq([r.rc, r.v, r.n, r.rev], [0, 1, 21, 0]);
+    t.eq(r.fx, C.SIM_EFFECTS);
+    t.eq(C.SIM_EFFECTS.length, 12);
+  });
+
+  test("sim: list pages like the firmware and covers every setting", (C) => {
+    const sim = new C.SimKeyboard();
+    const keys = [];
+    let i = 0;
+    let pages = 0;
+    for (;;) {
+      const r = ask(C, sim, R, 1, { i });
+      pages++;
+      for (const e of r.s) keys.push(e[0]);
+      if (r.next === undefined) break;
+      i = r.next;
+    }
+    t.ok(pages >= 2, "more than one page");
+    t.eq(keys.length, 21);
+    t.eq(keys[0], "rgb.on");
+    t.eq(keys[20], "kb.sleep_on_usb");
+    t.eq(ask(C, sim, R, 1, { i: 18 }).s[0], ["kb.os_keys", "u", 0, 83, 1]);
+    t.eq(ask(C, sim, R, 1, { i: 1 }).s[0], ["rgb.effect", "e", C.SIM_EFFECTS, null, 0]);
+    t.eq(ask(C, sim, R, 1, { i: 99 }), { rc: 0, s: [] });
+  });
+
+  test("sim: get pages, by index and by key", (C) => {
+    const sim = new C.SimKeyboard({ budget: 30 });
+    const all = {};
+    let r = { next: 0 };
+    let pages = 0;
+    while (r.next !== undefined) {
+      r = ask(C, sim, R, 2, { i: r.next });
+      Object.assign(all, r.v);
+      pages++;
+    }
+    t.eq(Object.keys(all).length, 21);
+    t.ok(pages > 5, "small budget, many pages");
+    t.eq([all["rgb.val"], all["ind.caps_color"], all["kb.os"]], [200, 0xffffff, "win"]);
+    sim.budget = 20;
+    r = ask(C, sim, R, 2, { k: ["rgb.val", "rgb.val", "kb.os"] });
+    t.eq(r.v, { "rgb.val": 200 }, "the duplicate is answered once");
+    t.eq(r.next, 2, "next is an index into k");
+    r = ask(C, sim, R, 2, { k: ["rgb.val", "rgb.val", "kb.os"], i: 2 });
+    t.eq(r.v, { "kb.os": "win" });
+    t.eq(r.next, undefined);
+    t.eq(ask(C, sim, R, 2, { k: [] }), { rc: 0, v: {} });
+  });
+
+  test("sim: get errors", (C) => {
+    const sim = new C.SimKeyboard();
+    t.eq(ask(C, sim, R, 2, { k: ["rgb.val", "nope"] }), { rc: 5 });
+    t.eq(ask(C, sim, R, 2, { k: new Array(33).fill("rgb.val") }), { rc: 3 });
+    t.eq(ask(C, sim, R, 2, { i: -1 }), { rc: 3 });
+  });
+
+  test("sim: set echoes the stored value and counts rev", (C) => {
+    const sim = new C.SimKeyboard();
+    t.eq(ask(C, sim, W, 3, { k: "rgb.val", v: 120 }), { rc: 0, v: 120 });
+    t.eq(ask(C, sim, W, 3, { k: "rgb.cycle", v: ["plasma", "solid", "plasma"] }), { rc: 0, v: ["plasma", "solid"] });
+    t.eq(sim.rev, 2);
+    t.eq(ask(C, sim, R, 0, {}).rev, 2);
+  });
+
+  test("sim: set errors as cfg_mgmt.c", (C) => {
+    const sim = new C.SimKeyboard();
+    t.eq(ask(C, sim, W, 3, { k: "rgb.val", v: 300 }), { rc: 3 });
+    t.eq(ask(C, sim, W, 3, { k: "rgb.on", v: 1 }), { rc: 3 });
+    t.eq(ask(C, sim, W, 3, { k: "rgb.effect", v: "fire" }), { rc: 3 });
+    t.eq(ask(C, sim, W, 3, { k: "rgb.cycle", v: new Array(17).fill("solid") }), { rc: 3 });
+    t.eq(ask(C, sim, W, 3, { k: "nope", v: 1 }), { rc: 5 });
+    t.eq(ask(C, sim, W, 3, { k: "kb.os_keys", v: "bad" }), { rc: 11 }, "read-only before the value check");
+    t.eq(ask(C, sim, W, 3, { k: "nope", v: null }), { rc: 3 }, "a value the request decoder refuses comes first");
+    t.eq(ask(C, sim, W, 3, { k: "kb.os_keys", v: -1 }), { rc: 3 });
+    t.eq(ask(C, sim, W, 3, { k: "kb.os_keys", v: new Array(17).fill("a") }), { rc: 3 });
+    t.eq(ask(C, sim, W, 3, { k: "rgb.val" }), { rc: 3 });
+    sim.failNextSet = 3;
+    t.eq(ask(C, sim, W, 3, { k: "rgb.val", v: 100 }), { rc: 3 });
+    t.eq(ask(C, sim, W, 3, { k: "rgb.val", v: 100 }), { rc: 0, v: 100 });
+  });
+
+  test("sim: reset", (C) => {
+    const sim = new C.SimKeyboard();
+    ask(C, sim, W, 3, { k: "rgb.val", v: 120 });
+    ask(C, sim, W, 3, { k: "kb.os", v: "mac" });
+    sim.setOsKeys(1);
+    t.eq(ask(C, sim, W, 4, { k: ["kb.os_keys", "rgb.val"] }), { rc: 11 });
+    t.eq(sim.values["rgb.val"], 120, "nothing reset when one key fails");
+    t.eq(ask(C, sim, W, 4, { k: ["nope"] }), { rc: 5 });
+    t.eq(ask(C, sim, W, 4, { k: ["rgb.val"] }), { rc: 0 });
+    t.eq([sim.values["rgb.val"], sim.values["kb.os"]], [200, "mac"]);
+    t.eq(ask(C, sim, W, 4, {}), { rc: 0 });
+    t.eq([sim.values["kb.os"], sim.values["kb.os_keys"]], ["win", 1], "all writable keys, not kb.os_keys");
+  });
+
+  test("sim: bad requests, other groups, old firmware", (C) => {
+    const sim = new C.SimKeyboard();
+    const empty = C.smpFrame(R, 67, 1, 0, new Uint8Array(0));
+    t.eq(C.smpParse(sim.handle(empty)).body, { rc: 3 }, "list refuses an empty payload");
+    t.eq(ask(C, sim, R, 3, { k: "rgb.val", v: 1 }), { rc: 8 }, "set sent as a read");
+    t.eq(ask(C, sim, R, 9, {}), { rc: 8 });
+    t.eq(ask(C, sim, R, 0, {}, 65), { rc: 8 });
+    const img = ask(C, sim, R, 0, {}, 1).images[0];
+    t.eq([img.slot, img.version, img.active, img.confirmed], [0, "0.4.0", true, true]);
+    const old = new C.SimKeyboard({ noConfig: true });
+    t.eq(ask(C, old, R, 0, {}), { rc: 8 });
+    t.eq(ask(C, old, R, 0, {}, 1).images.length, 1);
+  });
+
+  test("sim: Fn+Enter follows rgb.cycle, Studio changes kb.os_keys without rev", (C) => {
+    const sim = new C.SimKeyboard();
+    sim.pressFnEnter();
+    t.eq(sim.values["rgb.effect"], "rainbow");
+    ask(C, sim, W, 3, { k: "rgb.cycle", v: ["plasma", "wave"] });
+    sim.pressFnEnter();
+    t.eq(sim.values["rgb.effect"], "plasma", "not listed: the first entry");
+    sim.pressFnEnter();
+    t.eq(sim.values["rgb.effect"], "wave");
+    sim.pressFnEnter();
+    t.eq(sim.values["rgb.effect"], "plasma", "wraps");
+    const rev = sim.rev;
+    sim.setOsKeys(0);
+    t.eq(sim.rev, rev);
+    t.eq(ask(C, sim, R, 2, { k: ["kb.os_keys"] }).v, { "kb.os_keys": 0 });
+  });
+
+  test("sim: as a transport for SmpClient", async (C) => {
+    const tr = new C.SimTransport(new C.SimKeyboard(), { latencyMs: 1 });
+    const cl = new C.SmpClient(tr, { timeoutMs: 30 });
+    t.eq((await cl.request(R, 67, 0, {})).n, 21);
+    tr.drop = 1;
+    t.eq((await cl.request(R, 67, 2, { k: ["rgb.on"] })).v, { "rgb.on": true }, "after a retry");
+    const e = await t.rejects(cl.request(W, 67, 3, { k: "rgb.val", v: 999 }), /rc 3/);
+    t.ok(e instanceof C.DeviceError);
+    let lost = false;
+    cl.onClose = () => {
+      lost = true;
+    };
+    tr.lose();
+    t.ok(lost);
+    await t.rejects(cl.request(R, 67, 0, {}), /not connected/);
+  });
+
+  test("sim: demo variants", (C) => {
+    t.eq(C.demoOptions(null), {});
+    t.eq(new C.SimKeyboard(C.demoOptions("future")).defs.length, 22);
+    t.eq(new C.SimKeyboard(C.demoOptions("future")).fx.slice(-1), ["fireworks"]);
+    t.ok(new C.SimKeyboard(C.demoOptions("old")).noConfig);
+    t.ok(!new C.SimKeyboard(C.demoOptions("test")).confirmed);
+  });
+
   // end of tests
 
   async function runOne(fn, C, env) {

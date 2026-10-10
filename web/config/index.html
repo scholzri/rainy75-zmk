@@ -673,6 +673,319 @@ body {
   // end of config model
 })();
 </script>
+<!-- Section: simulated keyboard (?demo and the tests) -->
+<script data-core id="demo">
+"use strict";
+(() => {
+  const C = globalThis.RainyCore;
+
+  /* A keyboard in software: group 67 as zmk/src/config/cfg_mgmt.c answers it
+   * (the same table, paging with the same size estimates and page budget,
+   * errors, rev), group 1 image list (the firmware version), everything else
+   * rc 8. Replies use indefinite-length arrays and maps, as zcbor writes
+   * them. It includes the PR 5 sleep settings, so the demo shows every
+   * setting the page knows. */
+  const EFFECTS = ["solid", "rainbow", "plasma", "twinkle", "comet", "aurora", "reactive", "ripple",
+    "wave", "rain", "heatmap", "speedcolour"];
+  const RC = { EINVAL: 3, ENOENT: 5, ENOTSUP: 8, EACCESSDENIED: 11 };
+  const PAGE_BUDGET = 360; /* CFG_PAGE_BUDGET */
+  const KEYS_MAX = 32; /* CFG_MAX: keys in one get or reset */
+
+  function simTable(fx) {
+    return [
+      { key: "rgb.on", type: "b", def: true },
+      { key: "rgb.effect", type: "e", names: fx, def: "solid" },
+      { key: "rgb.hue", type: "u", min: 0, max: 255, def: 0 },
+      { key: "rgb.sat", type: "u", min: 0, max: 255, def: 255 },
+      { key: "rgb.val", type: "u", min: 16, max: 255, def: 200 },
+      { key: "rgb.speed", type: "u", min: 1, max: 255, def: 32 },
+      { key: "rgb.boot_effect", type: "e", names: ["last"].concat(fx), def: "last" },
+      { key: "rgb.cycle", type: "l", names: fx, def: fx.slice(0, C.LIST_MAX) },
+      { key: "rgb.val_battery", type: "u", min: 16, max: 255, def: 255 },
+      { key: "rgb.idle_s", type: "u", min: 0, max: 3600, def: 0 },
+      { key: "rgb.idle_mode", type: "e", names: ["off", "dim"], def: "off" },
+      { key: "ind.caps_style", type: "e", names: ["key", "tint", "off"], def: "key" },
+      { key: "ind.caps_color", type: "c", def: 0xffffff },
+      { key: "ind.fn_highlight", type: "b", def: true },
+      { key: "ind.passkey_guide", type: "b", def: true },
+      { key: "ind.bat_low", type: "u", min: 0, max: 50, def: 0 },
+      { key: "kb.os", type: "e", names: ["win", "mac"], def: "win" },
+      { key: "kb.gui_lock", type: "b", def: false },
+      { key: "kb.os_keys", type: "u", min: 0, max: 83, def: 2, ro: true },
+      { key: "kb.sleep_min", type: "u", min: 0, max: 120, def: 15 },
+      { key: "kb.sleep_on_usb", type: "b", def: false },
+    ];
+  }
+
+  const copy = (v) => (Array.isArray(v) ? v.slice() : v);
+  const isMap = (b) => b !== null && typeof b === "object" && !Array.isArray(b) && !ArrayBuffer.isView(b);
+  const textSize = (s) => new TextEncoder().encode(s).length;
+
+  class SimKeyboard {
+    /* opts: effects (names), extra (more table rows), budget (page budget),
+     * noConfig (a build without group 67, as v0.3.x), version, confirmed. */
+    constructor(opts = {}) {
+      this.fx = (opts.effects || EFFECTS).slice();
+      this.defs = simTable(this.fx).concat(opts.extra || []);
+      this.budget = opts.budget || PAGE_BUDGET;
+      this.noConfig = !!opts.noConfig;
+      this.version = opts.version || "0.4.0";
+      this.confirmed = opts.confirmed !== false;
+      this.values = {};
+      for (const d of this.defs) this.values[d.key] = copy(d.def);
+      this.rev = 0;
+      this.failNextSet = 0; /* rc for the next set (tests) */
+      this.requests = []; /* {op, group, cmd, body} of every request */
+    }
+
+    /* Fn+Enter: the next effect of rgb.cycle, as cfg_cycle_next(). */
+    pressFnEnter() {
+      const cur = this.fx.indexOf(this.values["rgb.effect"]);
+      const list = this.values["rgb.cycle"].map((n) => this.fx.indexOf(n));
+      let next = (cur + 1) % this.fx.length;
+      if (list.length) {
+        const j = list.indexOf(cur);
+        next = j < 0 ? list[0] : list[(j + 1) % list.length];
+      }
+      this.values["rgb.effect"] = this.fx[next];
+      this.rev++;
+    }
+
+    /* A keymap change in ZMK Studio: kb.os_keys changes, rev does not. */
+    setOsKeys(n) {
+      this.values["kb.os_keys"] = n;
+    }
+
+    /* A request frame -> the reply frame. */
+    handle(frame) {
+      const h = C.smpParse(frame);
+      const body = h.len ? h.body : null;
+      this.requests.push({ op: h.op, group: h.group, cmd: h.cmd, body });
+      const reply = this._dispatch(h, body);
+      return C.smpFrame(h.op + 1, h.group, h.cmd, h.seq, C.cborEncode(reply, { indefinite: true }));
+    }
+
+    _dispatch(h, body) {
+      if (h.group === C.SMP.GROUP_IMG && h.cmd === 0 && h.op === C.SMP.READ) {
+        return {
+          images: [{ slot: 0, version: this.version, hash: new Uint8Array(32), bootable: true, pending: false,
+            confirmed: this.confirmed, active: true, permanent: false }],
+          splitStatus: 0,
+        };
+      }
+      if (h.group !== C.SMP.GROUP_CFG || this.noConfig) return { rc: RC.ENOTSUP };
+      const cmds = [
+        [C.SMP.READ, () => this._info()],
+        [C.SMP.READ, () => this._list(body)],
+        [C.SMP.READ, () => this._get(body)],
+        [C.SMP.WRITE, () => this._set(body)],
+        [C.SMP.WRITE, () => this._reset(body)],
+      ];
+      const c = cmds[h.cmd];
+      if (!c || c[0] !== h.op) return { rc: RC.ENOTSUP };
+      if (h.cmd > 0 && !isMap(body)) return { rc: RC.EINVAL };
+      return c[1]();
+    }
+
+    _find(key) {
+      return this.defs.findIndex((d) => d.key === key);
+    }
+
+    _names(names) {
+      return names.reduce((s, n) => s + 2 + textSize(n), 2);
+    }
+
+    _entrySize(d) {
+      const s = 2 + (2 + textSize(d.key)) + 2 + 2;
+      if (d.type === "u") return s + 10;
+      if (d.type === "e" || d.type === "l") return s + this._names(d.names) + 1;
+      return s + 2;
+    }
+
+    _valueSize(d, v) {
+      const s = 2 + textSize(d.key);
+      if (d.type === "e") return s + 2 + textSize(v);
+      if (d.type === "l") return s + this._names(v);
+      return s + 5;
+    }
+
+    _info() {
+      return { rc: 0, v: 1, n: this.defs.length, fx: this.fx.slice(), rev: this.rev };
+    }
+
+    _start(b) {
+      if (!("i" in b)) return 0;
+      return Number.isInteger(b.i) && b.i >= 0 ? b.i : -1;
+    }
+
+    _list(b) {
+      const start = this._start(b);
+      if (start < 0) return { rc: RC.EINVAL };
+      const s = [];
+      let used = 0;
+      let i;
+      for (i = start; i < this.defs.length; i++) {
+        const d = this.defs[i];
+        const size = this._entrySize(d);
+        if (i > start && used + size > this.budget) break;
+        used += size;
+        const ab = d.type === "u" ? [d.min, d.max] : d.names ? [d.names.slice(), null] : [null, null];
+        s.push([d.key, d.type, ab[0], ab[1], d.ro ? 1 : 0]);
+      }
+      const r = { rc: 0, s };
+      if (i < this.defs.length) r.next = i;
+      return r;
+    }
+
+    _keysOk(b) {
+      return Array.isArray(b.k) && b.k.length <= KEYS_MAX && b.k.every((k) => typeof k === "string");
+    }
+
+    _get(b) {
+      const start = this._start(b);
+      if (start < 0) return { rc: RC.EINVAL };
+      let ids = null;
+      if ("k" in b) {
+        if (!this._keysOk(b)) return { rc: RC.EINVAL };
+        ids = b.k.map((k) => this._find(k));
+        if (ids.includes(-1)) return { rc: RC.ENOENT };
+      }
+      const total = ids ? ids.length : this.defs.length;
+      const v = {};
+      let used = 0;
+      let pos;
+      for (pos = start; pos < total; pos++) {
+        const id = ids ? ids[pos] : pos;
+        if (ids && ids.slice(0, pos).includes(id)) continue;
+        const d = this.defs[id];
+        const size = this._valueSize(d, this.values[d.key]);
+        if (used > 0 && used + size > this.budget) break;
+        used += size;
+        v[d.key] = copy(this.values[d.key]);
+      }
+      const r = { rc: 0, v };
+      if (pos < total) r.next = pos;
+      return r;
+    }
+
+    _check(d, v) {
+      switch (d.type) {
+        case "b":
+          return typeof v === "boolean" ? v : undefined;
+        case "u":
+          return Number.isInteger(v) && v >= d.min && v <= d.max ? v : undefined;
+        case "c":
+          return Number.isInteger(v) && v >= 0 && v <= 0xffffff ? v : undefined;
+        case "e":
+          return typeof v === "string" && d.names.includes(v) ? v : undefined;
+        case "l":
+          if (!Array.isArray(v) || v.length > C.LIST_MAX) return undefined;
+          if (!v.every((n) => typeof n === "string" && d.names.includes(n))) return undefined;
+          return v.filter((n, i) => v.indexOf(n) === i);
+        default:
+          return undefined;
+      }
+    }
+
+    /* What decode_any() in cfg_mgmt.c reads: a bool, an unsigned 32-bit
+     * integer, text, or up to 16 texts. Anything else fails the whole request
+     * with EINVAL, before the key is looked up. */
+    _decodable(v) {
+      if (typeof v === "boolean" || typeof v === "string") return true;
+      if (Number.isInteger(v)) return v >= 0 && v <= 0xffffffff;
+      return Array.isArray(v) && v.length <= C.LIST_MAX && v.every((n) => typeof n === "string");
+    }
+
+    _set(b) {
+      if (typeof b.k !== "string" || !("v" in b) || !this._decodable(b.v)) return { rc: RC.EINVAL };
+      const i = this._find(b.k);
+      if (i < 0) return { rc: RC.ENOENT };
+      const d = this.defs[i];
+      if (d.ro) return { rc: RC.EACCESSDENIED };
+      if (this.failNextSet) {
+        const rc = this.failNextSet;
+        this.failNextSet = 0;
+        return { rc };
+      }
+      const v = this._check(d, b.v);
+      if (v === undefined) return { rc: RC.EINVAL };
+      this.values[d.key] = v;
+      this.rev++;
+      return { rc: 0, v: copy(v) };
+    }
+
+    _reset(b) {
+      let ids = this.defs.map((d, i) => i).filter((i) => !this.defs[i].ro);
+      if ("k" in b) {
+        if (!this._keysOk(b)) return { rc: RC.EINVAL };
+        ids = [];
+        for (const k of b.k) {
+          const i = this._find(k);
+          if (i < 0) return { rc: RC.ENOENT };
+          if (this.defs[i].ro) return { rc: RC.EACCESSDENIED };
+          ids.push(i);
+        }
+      }
+      for (const i of ids) {
+        this.values[this.defs[i].key] = copy(this.defs[i].def);
+        this.rev++;
+      }
+      return { rc: 0 };
+    }
+  }
+
+  /* SimKeyboard as a transport for SmpClient, answering after latencyMs;
+   * drop: requests to swallow (tests), lose(): the link goes away. */
+  class SimTransport {
+    constructor(sim, opts = {}) {
+      this.sim = sim;
+      this.kind = "demo";
+      this.latencyMs = opts.latencyMs === undefined ? 10 : opts.latencyMs;
+      this.drop = 0;
+      this.onPacket = null;
+      this.onClose = null;
+      this.closed = false;
+    }
+
+    async send(frame) {
+      if (this.closed) throw new Error("closed");
+      if (this.drop > 0) {
+        this.drop--;
+        return;
+      }
+      const reply = this.sim.handle(frame);
+      setTimeout(() => {
+        if (!this.closed && this.onPacket) this.onPacket(reply);
+      }, this.latencyMs);
+    }
+
+    async close() {
+      this.closed = true;
+    }
+
+    lose() {
+      this.closed = true;
+      if (this.onClose) this.onClose(new Error("simulated loss"));
+    }
+  }
+
+  /* ?demo=future: a setting and an effect this page does not know;
+   * ?demo=old: a firmware without group 67; ?demo=test: an unconfirmed image. */
+  function demoOptions(variant) {
+    if (variant === "future") {
+      return {
+        effects: EFFECTS.concat(["fireworks"]),
+        extra: [{ key: "rgb.future", type: "u", min: 0, max: 9, def: 1 }],
+      };
+    }
+    if (variant === "old") return { noConfig: true, version: "0.3.3" };
+    if (variant === "test") return { confirmed: false };
+    return {};
+  }
+
+  Object.assign(C, { SIM_EFFECTS: EFFECTS, SimKeyboard, SimTransport, demoOptions });
+})();
+</script>
 <!-- end of sections -->
 </body>
 </html>
