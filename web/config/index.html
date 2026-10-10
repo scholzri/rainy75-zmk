@@ -2372,7 +2372,7 @@ button.mv { padding: .1rem .5rem; }
       }));
       if (focus) {
         const li = list.querySelector(`li[data-name="${focus[0]}"]`);
-        const el = li && [focus[1], "up", "down", "cb"].map((p) => li.querySelector(`[data-part="${p}"]`))
+        const el = li && [focus[1], "cb", "up", "down"].map((p) => li.querySelector(`[data-part="${p}"]`))
           .find((x) => x && !x.disabled);
         if (el) el.focus();
       }

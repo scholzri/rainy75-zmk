@@ -2200,6 +2200,42 @@
     }
   });
 
+  uiTest("ui: Enter repeated on a move button past the end keeps the row at the end", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const names = () => Array.from(p.d.querySelectorAll("#set-rgb-cycle li"), (li) => li.dataset.name);
+      const btn = (n, x) => p.d.querySelector(`#set-rgb-cycle li[data-name="${n}"] [data-part="${x}"]`);
+      /* Enter on a button clicks it; on a checkbox it does nothing (a script
+       * cannot send a trusted key press, so the test applies that rule). */
+      const enter = () => {
+        const el = p.d.activeElement;
+        if (el.tagName === "BUTTON") el.click();
+      };
+      const settled = (n, i) => names().indexOf(n) === i && p.sim.values["rgb.cycle"].indexOf(n) === i;
+      t.eq(names().indexOf("comet"), 4);
+      btn("comet", "up").focus();
+      for (let i = 0; i < 12; i++) enter();
+      await until(() => settled("comet", 0), 3000);
+      await sleep(300);
+      t.ok(settled("comet", 0), "past the top: comet stays first on the page and on the keyboard");
+      t.eq(p.d.activeElement.closest("li").dataset.name, "comet", "focus stays on the row");
+      t.eq(names().indexOf("rain"), 9);
+      btn("rain", "down").focus();
+      for (let i = 0; i < 12; i++) enter();
+      await until(() => settled("rain", 11), 3000);
+      await sleep(300);
+      t.ok(settled("rain", 11), "past the bottom: rain stays last on the page and on the keyboard");
+      t.eq(p.d.activeElement.closest("li").dataset.name, "rain", "focus stays on the row");
+      btn("rain", "up").focus();
+      for (let i = 0; i < 12; i++) enter();
+      await until(() => settled("rain", 0), 3000);
+      await sleep(300);
+      t.ok(settled("rain", 0), "12 presses from the bottom end at the top");
+    } finally {
+      p.close();
+    }
+  });
+
   uiTest("ui: an update that arrived during a drag shows after dragend", async (C, env) => {
     const p = await openDemo(env);
     try {
