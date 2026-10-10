@@ -140,24 +140,37 @@ class BleDfu(Dfu):
     answers a repeated chunk with the offset it already has."""
 
     RETRIES = 5
+    REPLY_S = 5.0    # wait for an upload reply before going on from the confirmed offset
+    WINDOW = 2       # upload requests in flight: 2 and 3 are equally fast (the
+                     # keyboard is the limit then), 4 runs out of its SMP buffers
 
     def __init__(self, address=None):
         import rainy75_rgb_ble          # needs bleak, so only for --ble
         self.loop = asyncio.new_event_loop()
         self.kb = rainy75_rgb_ble.Rainy75BLE(address=address)
+        # Our own notification handler (set before connect, which subscribes
+        # it): it keeps every reply frame for the pipelined upload and still
+        # hands it to the client's one-request path.
+        self.frames = asyncio.Queue()
+        self._rx = bytearray()
+        self.kb._on_notify = self._on_notify
         try:
             self.loop.run_until_complete(self.kb.connect())
         except BaseException:
             self.loop.close()
             raise
-        # BlueZ reports the negotiated ATT MTU only after this; without it the
-        # client writes 20-byte pieces and an image takes about 2.3x longer.
-        backend = getattr(self.kb.client, "_backend", None)
-        if hasattr(backend, "_acquire_mtu"):
-            try:
-                self.loop.run_until_complete(backend._acquire_mtu())
-            except Exception:
-                pass                        # keep the 20-byte pieces
+        # The negotiated ATT MTU: BlueZ shows it as the SMP characteristic's
+        # "MTU" property. bleak's own _acquire_mtu() is not used: it picks the
+        # first writable characteristic, sometimes a HID one that BlueZ owns
+        # (NotAuthorized). Without the MTU the client writes 20-byte pieces
+        # and an image takes about 2.3x longer.
+        try:
+            char = self.kb.client.services.get_characteristic(rainy75_rgb_ble.SMP_CHAR_UUID)
+            mtu = int(char.obj[1].get("MTU", 0))
+            if mtu > 23:
+                self.kb.client._backend._mtu_size = mtu
+        except Exception:
+            pass                            # keep the 20-byte pieces
 
     def close(self):
         try:
@@ -175,6 +188,93 @@ class BleDfu(Dfu):
             except asyncio.TimeoutError:
                 if attempt == retries:
                     raise TimeoutError("no answer over Bluetooth") from None
+
+    def _on_notify(self, _char, data):
+        self._rx += data
+        while len(self._rx) >= 8:
+            length, = struct.unpack_from(">H", self._rx, 2)
+            if len(self._rx) < 8 + length:
+                return
+            frame = bytes(self._rx[:8 + length])
+            del self._rx[:8 + length]
+            self.frames.put_nowait(frame)
+            self.kb._response = frame
+            self.kb._resp_event.set()
+
+    async def _send(self, op, group, cmd, pairs):
+        """Write one request without waiting; returns its sequence number."""
+        import rainy75_rgb_ble
+        kb = self.kb
+        body = rainy75_rgb._cbor_map(pairs)
+        seq = kb.seq & 0xFF
+        kb.seq += 1
+        frame = struct.pack(">BBHHBB", op, 0, len(body), group, seq, cmd) + body
+        size = max(20, (kb.client.mtu_size or 23) - 3)
+        for i in range(0, len(frame), size):
+            await kb.client.write_gatt_char(rainy75_rgb_ble.SMP_CHAR_UUID,
+                                            frame[i:i + size], response=False)
+        return seq
+
+    def upload(self, data, progress=True):
+        self.loop.run_until_complete(self._upload(data, progress))
+
+    async def _upload(self, data, progress):
+        """Pipelined upload: up to WINDOW chunks in flight. Every reply
+        carries the offset the keyboard has reached (also for a chunk at the
+        wrong offset, which it skips), so replies are cumulative: on a gap or
+        a lost reply the upload goes on from the last offset the keyboard
+        confirmed."""
+        while not self.frames.empty():
+            self.frames.get_nowait()
+        size, t0 = len(data), time.time()
+        acked = 0                   # offset the keyboard confirmed
+        nxt = 0                     # next offset to send
+        inflight = {}               # seq -> offset the keyboard reaches with it
+        silent = 0                  # timeouts in a row
+        first = True
+        while acked < size:
+            window = 1 if first else self.WINDOW   # the first one erases slot 1
+            while len(inflight) < window and nxt < size:
+                pairs = [("off", smp.cbor_encode_uint(nxt)),
+                         ("data", smp.cbor_encode_bstr(data[nxt:nxt + CHUNK]))]
+                if nxt == 0:
+                    pairs = [("image", smp.cbor_encode_uint(0)),
+                             ("len", smp.cbor_encode_uint(size))] + pairs
+                seq = await self._send(smp.SMP_OP_WRITE_REQ, smp.SMP_GROUP_IMG,
+                                       IMG_MGMT_UPLOAD, pairs)
+                inflight[seq] = min(nxt + CHUNK, size)
+                nxt = inflight[seq]
+            try:
+                frame = await asyncio.wait_for(self.frames.get(),
+                                               30.0 if first else self.REPLY_S)
+            except asyncio.TimeoutError:
+                silent += 1
+                if silent > self.RETRIES:
+                    raise TimeoutError("no answer over Bluetooth") from None
+                inflight.clear()            # resend from the confirmed offset
+                nxt = acked
+                continue
+            silent = 0
+            seq = frame[6]
+            reply, _ = rainy75_rgb._cbor_decode(frame[8:])
+            if reply.get("rc", 0) != 0:
+                raise RuntimeError(f"upload refused at offset {acked}: {reply}")
+            off = reply.get("off", acked)
+            acked = max(acked, off)
+            want = inflight.pop(seq, None)
+            if want is None:
+                continue                    # a reply from before a resend
+            first = False
+            if off != want:                 # the keyboard skipped a chunk
+                inflight.clear()
+                nxt = acked
+            if not inflight:
+                nxt = max(nxt, acked)
+            if progress:
+                print(f"\r  {100 * acked // size:3d} %  {acked}/{size} B", end="", flush=True)
+        dt = time.time() - t0
+        if progress:
+            print(f"\r  100 %  {size} B in {dt:.1f} s ({size / dt / 1024:.1f} KiB/s)")
 
     def reset(self):
         try:

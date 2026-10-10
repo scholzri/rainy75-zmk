@@ -92,5 +92,50 @@ class BleRetry(unittest.TestCase):
         self.assertEqual(d.kb.calls, [(2, 0, 5)])
 
 
+class FakeKeyboard:
+    """Image upload on the keyboard side: takes a chunk only at its own
+    offset and always answers with the offset it has; drops the replies
+    whose numbers are in `drop` (BlueZ losing a notification)."""
+    def __init__(self, d, drop=()):
+        self.d, self.off, self.data, self.n, self.drop = d, 0, bytearray(), 0, set(drop)
+
+    async def send(self, op, group, cmd, pairs):
+        fields = dict(pairs)
+        off = dfu.rainy75_rgb._cbor_decode(fields["off"])[0]
+        chunk = dfu.rainy75_rgb._cbor_decode(fields["data"])[0]
+        if off == self.off:
+            self.data += chunk
+            self.off += len(chunk)
+        seq = self.n & 0xFF
+        self.n += 1
+        if seq not in self.drop:
+            body = dfu.rainy75_rgb._cbor_map([("rc", b"\x00"),
+                                              ("off", dfu.smp.cbor_encode_uint(self.off))])
+            self.d.frames.put_nowait(struct.pack(">BBHHBB", 3, 0, len(body), 1, seq, 1) + body)
+        return seq
+
+
+class Pipelined(unittest.TestCase):
+    def run_upload(self, size, drop=()):
+        d = dfu.BleDfu.__new__(dfu.BleDfu)
+        d.loop = asyncio.new_event_loop()
+        self.addCleanup(d.loop.close)
+        d.frames = asyncio.Queue()
+        kb = FakeKeyboard(d, drop)
+        d._send = kb.send
+        data = bytes(i & 0xFF for i in range(size))
+        d.REPLY_S = 0.05
+        d.upload(data, progress=False)
+        return kb, data
+
+    def test_clean_upload(self):
+        kb, data = self.run_upload(5 * dfu.CHUNK + 17)
+        self.assertEqual(bytes(kb.data), data)
+
+    def test_lost_replies_go_on_from_the_confirmed_offset(self):
+        kb, data = self.run_upload(12 * dfu.CHUNK + 5, drop={3, 4, 9})
+        self.assertEqual(bytes(kb.data), data)
+
+
 if __name__ == "__main__":
     unittest.main()

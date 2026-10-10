@@ -211,7 +211,7 @@ It uploads the image, checks it arrived intact, marks it for a test boot and res
 
 No cable at hand? Add `--ble` to update over Bluetooth from a computer the keyboard is
 paired with (needs `pip install bleak`; `--address` picks the keyboard if there are
-several). It works the same way and takes about 30 s instead of about 12 s:
+several). It works the same way and takes about 20 s instead of about 12 s:
 
 ```bash
 python3 reverse/tools/rainy75_dfu.py --ble upload build/zephyr/zmk.signed.bin --test --reset
