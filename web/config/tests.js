@@ -390,6 +390,49 @@
     t.eq(d.push(joinLines([half].concat(C.serialEncode(counting(5))))), [counting(5)]);
   });
 
+  // ---- Task 4: Bluetooth reassembly ----
+
+  const replyFrame = (C, body) => C.smpFrame(1, 67, 1, 0, C.cborEncode(body, { indefinite: true }));
+
+  test("ble: names and UUIDs of the SMP service", (C) => {
+    t.eq(C.BLE.NAME, "Rainy 75 Pro");
+    t.eq(C.BLE.SERVICE, "8d53dc1d-1db7-4cd3-868b-8a527460aa84");
+    t.eq(C.BLE.CHAR, "da2e7828-fbce-4e01-ae9e-261174997c48");
+  });
+
+  test("ble: requests go out in 20-byte writes", (C) => {
+    t.eq(C.bleChunks(counting(45)).map((c) => c.length), [20, 20, 5]);
+    t.eq(C.bleChunks(counting(20)).map((c) => c.length), [20]);
+    t.eq(joinLines(C.bleChunks(counting(45))), counting(45));
+  });
+
+  test("ble: a reply over several notifications", (C) => {
+    const f = replyFrame(C, { rc: 0, s: new Array(10).fill(["rgb.on", "b", null, null, 0]) });
+    t.ok(f.length > 100);
+    const r = new C.BleReassembler();
+    const got = [];
+    for (const c of C.bleChunks(f)) got.push(...r.push(c));
+    t.eq(got, [f]);
+  });
+
+  test("ble: the header itself split, and two frames in one notification", (C) => {
+    const a = replyFrame(C, { rc: 0 });
+    const b = replyFrame(C, { rc: 0, next: 3 });
+    const r = new C.BleReassembler();
+    t.eq(r.push(a.subarray(0, 3)), []);
+    t.eq(r.push(bytes(Array.from(a.subarray(3)), Array.from(b))), [a, b]);
+  });
+
+  test("ble: reset drops a half frame, nonsense lengths start over", (C) => {
+    const a = replyFrame(C, { rc: 0, v: 1 });
+    const r = new C.BleReassembler();
+    r.push(a.subarray(0, 10));
+    r.reset();
+    t.eq(r.push(a), [a]);
+    t.eq(r.push(bytes(1, 0, 0xff, 0xff, 0, 67, 0, 0)), []);
+    t.eq(r.push(a), [a], "after a bogus length");
+  });
+
   // end of tests
 
   async function runOne(fn, C, env) {
