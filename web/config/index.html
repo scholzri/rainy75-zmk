@@ -610,25 +610,42 @@ body {
   }
 
   /* Slider sends: at most one per intervalMs and one at a time (the next waits
-   * for the reply), always the newest value; flush(v) sends v at once (after
-   * a send in flight), unless it is the value sent last. send(v) returns a
-   * Promise. clock: {now, setTimeout, clearTimeout}, for the tests. */
+   * for the reply), always the newest value. flush(v) is the value on release:
+   * it replaces the pending one and goes out like any other, at the end of the
+   * current window (so input then change on every keyboard step stays within
+   * the rate), unless v is the value sent last and that send did not fail.
+   * send(v) returns a Promise; one that rejects or resolves to false failed,
+   * and its value counts as not sent. clock: {now, setTimeout, clearTimeout},
+   * for the tests. */
   const realClock = {
-    now: () => Date.now(),
+    now: () => (typeof performance !== "undefined" ? performance.now() : Date.now()),
     setTimeout: (f, ms) => setTimeout(f, ms),
     clearTimeout: (id) => clearTimeout(id),
   };
 
   function makeThrottle(intervalMs, send, clock = realClock) {
-    let last = -Infinity;
+    const NONE = {};
+    let last = -Infinity; /* when the last send started */
     let value;
-    let lastSent;
+    let lastSent = NONE; /* the value of the last send that did not fail */
     let has = false;
+    let release = false; /* the pending value came from flush() */
     let busy = false;
     let timer = null;
+    function done(ok) {
+      busy = false;
+      if (!ok) lastSent = NONE;
+      run();
+    }
     function run() {
+      if (timer !== null) clock.clearTimeout(timer);
       timer = null;
       if (!has || busy) return;
+      if (release && sameValue(value, lastSent)) {
+        has = false;
+        release = false;
+        return;
+      }
       const wait = last + intervalMs - clock.now();
       if (wait > 0) {
         timer = clock.setTimeout(run, wait);
@@ -636,30 +653,25 @@ body {
       }
       const v = value;
       has = false;
+      release = false;
       busy = true;
       last = clock.now();
       lastSent = v;
       Promise.resolve()
         .then(() => send(v))
-        .catch(() => {})
-        .then(() => {
-          busy = false;
-          if (has && timer === null) run();
-        });
+        .then((r) => done(r !== false), () => done(false));
     }
     return {
       push(v) {
         value = v;
         has = true;
+        release = false;
         if (timer === null) run();
       },
       flush(v) {
-        if (!has && sameValue(v, lastSent)) return;
         value = v;
         has = true;
-        if (timer !== null) clock.clearTimeout(timer);
-        timer = null;
-        last = -Infinity;
+        release = true;
         run();
       },
       pending: () => has || busy || timer !== null,

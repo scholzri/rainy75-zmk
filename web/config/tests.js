@@ -555,7 +555,9 @@
     await clock.advance(10);
     th.flush(65);
     await settle();
-    t.eq(sent, [[0, 0], [50, 40], [65, 65]], "flush sends at once, the pending 55 is replaced");
+    t.eq(sent, [[0, 0], [50, 40]], "flush waits for the end of the window");
+    await clock.advance(35);
+    t.eq(sent, [[0, 0], [50, 40], [100, 65]], "the pending 55 is replaced by the release value");
     await clock.advance(200);
     t.eq(sent.length, 3);
   });
@@ -598,7 +600,70 @@
     t.eq(sent, [7]);
     th.flush(8);
     await settle();
+    t.eq(sent, [7], "8 waits for the end of the window");
+    await clock.advance(50);
     t.eq(sent, [7, 8]);
+  });
+
+  test("throttle: input then change on every step still sends once per window", async (C) => {
+    const clock = fakeClock();
+    const sent = [];
+    const th = C.makeThrottle(150, (v) => sent.push([clock.t, v]), clock);
+    for (let i = 0; i < 12; i++) {
+      await clock.advance(33);
+      th.push(i);
+      th.flush(i); /* a keyboard step on a range input: input, then change */
+      await settle();
+    }
+    const released = clock.t;
+    await clock.advance(150);
+    t.eq(sent.map((s) => s[1]), [0, 4, 9, 11], "the newest value of each window, then the release value");
+    for (let i = 1; i < sent.length; i++) t.ok(sent[i][0] - sent[i - 1][0] >= 150, "gap before send " + i);
+    t.ok(sent[sent.length - 1][0] - released <= 150, "the release value goes out within one window");
+    t.ok(!th.pending());
+  });
+
+  test("throttle: a failed send is sent again by the release value", async (C) => {
+    for (const fail of [() => Promise.reject(new Error("no reply")), () => Promise.resolve(false)]) {
+      const clock = fakeClock();
+      const sent = [];
+      let failing = true;
+      const th = C.makeThrottle(50, (v) => {
+        sent.push(v);
+        return failing ? fail() : undefined;
+      }, clock);
+      th.push(5);
+      await settle();
+      t.eq(sent, [5]);
+      failing = false;
+      th.flush(5);
+      await clock.advance(50);
+      t.eq(sent, [5, 5], "not taken as sent");
+      th.flush(5);
+      await clock.advance(50);
+      t.eq(sent, [5, 5], "sent now, nothing more");
+    }
+  });
+
+  test("throttle: release value equal to the one still in flight", async (C) => {
+    for (const ok of [true, false]) {
+      const clock = fakeClock();
+      const sent = [];
+      let answer;
+      const th = C.makeThrottle(50, (v) => {
+        sent.push(v);
+        return new Promise((resolve, reject) => {
+          answer = ok ? resolve : reject;
+        });
+      }, clock);
+      th.push(5);
+      th.flush(5);
+      await settle();
+      t.eq(sent, [5], "input and change send once");
+      answer(ok ? undefined : new Error("lost"));
+      await clock.advance(100);
+      t.eq(sent, ok ? [5] : [5, 5], ok ? "answered: nothing more" : "lost: sent again");
+    }
   });
 
   // ---- Task 6: the simulated keyboard ----
