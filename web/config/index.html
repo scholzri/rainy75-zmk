@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Rainy 75 settings</title>
+<link rel="icon" href="data:,">
+<!--
+  The Rainy 75 config page: one self-contained file (no libraries, fonts or
+  network; the Content Security Policy above blocks every request). It talks
+  to the keyboard over mcumgr group 67 (docs/config-protocol.md), over USB
+  (Web Serial) or Bluetooth (Web Bluetooth). Sections, in this order: SMP +
+  CBOR, USB transport, Bluetooth transport, config model, simulated keyboard
+  (?demo), labels and help, UI. The script sections marked data-core touch no
+  browser API when they load, so test-node.mjs and test.html can run them.
+-->
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f5f6f8; --fg: #1a1c20; --muted: #555d6b; --card: #ffffff; --line: #d8dce2;
+  --accent: #1f56d1; --accent-fg: #ffffff; --focus: #1f56d1;
+  --info-bg: #e8effd; --info-fg: #173b8c; --warn-bg: #fff3d1; --warn-fg: #5f4300;
+  --err-bg: #fde7e7; --err-fg: #861b1b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a; --fg: #e6e8ec; --muted: #a3aab6; --card: #1d2026; --line: #343943;
+    --accent: #7ea4ff; --accent-fg: #0b1222; --focus: #9cbaff;
+    --info-bg: #182844; --info-fg: #c7d8ff; --warn-bg: #3a2e0e; --warn-fg: #ffd98c;
+    --err-bg: #3e1818; --err-fg: #ffb8b8;
+  }
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body {
+  margin: 0; color: var(--fg); background: var(--bg);
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+/* end of styles */
+</style>
+</head>
+<body>
+<noscript><p>This page needs JavaScript.</p></noscript>
+<!-- end of page markup -->
+
+<!-- Section: SMP + CBOR -->
+<script data-core id="smp">
+"use strict";
+(() => {
+  const C = (globalThis.RainyCore = globalThis.RainyCore || {});
+
+  /* CBOR (RFC 8949), the subset SMP needs: unsigned and negative integers,
+   * byte and text strings, arrays, maps, false, true, null. Requests are
+   * always definite length; replies may use indefinite-length arrays and maps
+   * (zcbor writes them so), the decoder accepts both. */
+  const utf8 = new TextEncoder();
+  const utf8In = new TextDecoder("utf-8", { fatal: true });
+
+  function cborHead(out, major, n) {
+    if (!Number.isInteger(n) || n < 0 || n > 0xffffffff) {
+      throw new RangeError("CBOR: value out of range: " + n);
+    }
+    const m = major << 5;
+    if (n < 24) out.push(m | n);
+    else if (n < 0x100) out.push(m | 24, n);
+    else if (n < 0x10000) out.push(m | 25, n >> 8, n & 255);
+    else out.push(m | 26, n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255);
+  }
+
+  function cborItem(out, v, indef) {
+    if (v === false) out.push(0xf4);
+    else if (v === true) out.push(0xf5);
+    else if (v === null) out.push(0xf6);
+    else if (typeof v === "number") {
+      if (!Number.isInteger(v)) throw new TypeError("CBOR: not an integer: " + v);
+      if (v >= 0) cborHead(out, 0, v);
+      else cborHead(out, 1, -1 - v);
+    } else if (typeof v === "string") {
+      const b = utf8.encode(v);
+      cborHead(out, 3, b.length);
+      for (const x of b) out.push(x);
+    } else if (ArrayBuffer.isView(v)) {
+      const b = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+      cborHead(out, 2, b.length);
+      for (const x of b) out.push(x);
+    } else if (Array.isArray(v)) {
+      if (indef) out.push(0x9f);
+      else cborHead(out, 4, v.length);
+      for (const x of v) cborItem(out, x, indef);
+      if (indef) out.push(0xff);
+    } else if (typeof v === "object") {
+      const keys = Object.keys(v);
+      if (indef) out.push(0xbf);
+      else cborHead(out, 5, keys.length);
+      for (const k of keys) {
+        cborItem(out, k, indef);
+        cborItem(out, v[k], indef);
+      }
+      if (indef) out.push(0xff);
+    } else {
+      throw new TypeError("CBOR: cannot encode " + typeof v);
+    }
+  }
+
+  /* value -> bytes. opts.indefinite writes arrays and maps with indefinite
+   * length (the simulated keyboard answers so, as the firmware does). */
+  function cborEncode(v, opts) {
+    const out = [];
+    cborItem(out, v, !!(opts && opts.indefinite));
+    return Uint8Array.from(out);
+  }
+
+  /* bytes -> value. Maps become plain objects, byte strings Uint8Array.
+   * Throws on truncated input, trailing bytes, tags, floats and
+   * indefinite-length strings. */
+  function cborDecode(d) {
+    let p = 0;
+    const need = (n) => {
+      if (p + n > d.length) throw new Error("CBOR: truncated");
+    };
+    const arg = (minor) => {
+      if (minor < 24) return minor;
+      const len = { 24: 1, 25: 2, 26: 4, 27: 8 }[minor];
+      if (!len) throw new Error("CBOR: bad length field " + minor);
+      need(len);
+      let n = 0;
+      for (let i = 0; i < len; i++) n = n * 256 + d[p++];
+      if (!Number.isSafeInteger(n)) throw new Error("CBOR: integer too large");
+      return n;
+    };
+    const item = (depth) => {
+      if (depth > 16) throw new Error("CBOR: nested too deep");
+      need(1);
+      const ib = d[p++];
+      const major = ib >> 5;
+      const minor = ib & 31;
+      if (major === 0) return arg(minor);
+      if (major === 1) return -1 - arg(minor);
+      if (major === 2 || major === 3) {
+        if (minor === 31) throw new Error("CBOR: indefinite-length string");
+        const n = arg(minor);
+        need(n);
+        const s = d.slice(p, p + n);
+        p += n;
+        return major === 2 ? s : utf8In.decode(s);
+      }
+      if (major === 4 || major === 5) {
+        const indef = minor === 31;
+        const n = indef ? Infinity : arg(minor);
+        const out = major === 4 ? [] : {};
+        for (let i = 0; i < n; i++) {
+          need(1);
+          if (indef && d[p] === 0xff) {
+            p++;
+            break;
+          }
+          if (major === 4) {
+            out.push(item(depth + 1));
+            continue;
+          }
+          const k = item(depth + 1);
+          if (typeof k !== "string" && typeof k !== "number") throw new Error("CBOR: map key type");
+          const v = item(depth + 1);
+          if (k !== "__proto__") out[k] = v;
+        }
+        return out;
+      }
+      if (major === 7) {
+        if (minor === 20) return false;
+        if (minor === 21) return true;
+        if (minor === 22 || minor === 23) return null;
+        throw new Error("CBOR: unsupported simple value " + minor);
+      }
+      throw new Error("CBOR: unsupported major type " + major);
+    };
+    const v = item(0);
+    if (p !== d.length) throw new Error("CBOR: trailing bytes");
+    return v;
+  }
+
+  /* SMP (mcumgr) frame: an 8-byte header (op, flags, payload length, group,
+   * sequence number, command; big-endian), then the CBOR payload. The version
+   * bits stay 0 (SMP v1), as reverse/tools/restore_original.py sends. */
+  const SMP = { READ: 0, WRITE: 2, HDR: 8, GROUP_OS: 0, GROUP_IMG: 1, GROUP_CFG: 67 };
+
+  function smpFrame(op, group, cmd, seq, payload) {
+    if (payload.length > 0xffff) throw new RangeError("SMP: payload too large");
+    const f = new Uint8Array(SMP.HDR + payload.length);
+    f.set([op & 7, 0, payload.length >> 8, payload.length & 255, group >> 8, group & 255, seq & 255, cmd & 255]);
+    f.set(payload, SMP.HDR);
+    return f;
+  }
+
+  function smpRequest(op, group, cmd, seq, body) {
+    return smpFrame(op, group, cmd, seq, cborEncode(body));
+  }
+
+  function smpParse(frame) {
+    if (frame.length < SMP.HDR) throw new Error("SMP: frame too short");
+    const len = (frame[2] << 8) | frame[3];
+    if (frame.length < SMP.HDR + len) throw new Error("SMP: frame shorter than its header says");
+    return {
+      op: frame[0] & 7,
+      flags: frame[1],
+      len,
+      group: (frame[4] << 8) | frame[5],
+      seq: frame[6],
+      cmd: frame[7],
+      body: len ? cborDecode(frame.subarray(SMP.HDR, SMP.HDR + len)) : {},
+    };
+  }
+
+  Object.assign(C, { cborEncode, cborDecode, SMP, smpFrame, smpRequest, smpParse });
+  // end of SMP + CBOR
+})();
+</script>
+<!-- end of sections -->
+</body>
+</html>
