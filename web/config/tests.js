@@ -176,6 +176,135 @@
     t.throws(() => C.smpParse(bytes(1, 0)), /too short/);
   });
 
+  // ---- Task 2: SMP client ----
+
+  /* A transport that answers every request with {rc, seq} after delayMs;
+   * drop: requests to swallow first; rc: the rc to answer; sent: frames. */
+  function echoTransport(C, opts = {}) {
+    const tr = {
+      sent: [],
+      drop: opts.drop || 0,
+      onPacket: null,
+      onClose: null,
+      async send(frame) {
+        tr.sent.push(frame);
+        if (tr.drop > 0) {
+          tr.drop--;
+          return;
+        }
+        const m = C.smpParse(frame);
+        const reply = C.smpFrame(m.op + 1, m.group, m.cmd, m.seq, C.cborEncode({ rc: opts.rc || 0, seq: m.seq }));
+        setTimeout(() => tr.onPacket(reply), opts.delayMs || 1);
+      },
+    };
+    return tr;
+  }
+
+  test("client: request and reply, sequence numbers count up", async (C) => {
+    const tr = echoTransport(C);
+    const cl = new C.SmpClient(tr, { timeoutMs: 200 });
+    t.eq((await cl.request(C.SMP.READ, 67, 0, {})).seq, 0);
+    t.eq((await cl.request(C.SMP.READ, 67, 0, {})).seq, 1);
+    t.eq(tr.sent.length, 2);
+    t.eq(hex(tr.sent[1]), "0000000100430100a0");
+  });
+
+  test("client: one request at a time", async (C) => {
+    const tr = echoTransport(C, { delayMs: 20 });
+    const cl = new C.SmpClient(tr, { timeoutMs: 500 });
+    const a = cl.request(C.SMP.READ, 67, 0, {});
+    const b = cl.request(C.SMP.READ, 67, 1, {});
+    await sleep(5);
+    t.eq(tr.sent.length, 1, "second request waits for the first reply");
+    t.eq([(await a).seq, (await b).seq], [0, 1]);
+  });
+
+  test("client: a lost request is sent once more", async (C) => {
+    const tr = echoTransport(C, { drop: 1 });
+    const cl = new C.SmpClient(tr, { timeoutMs: 30 });
+    t.eq((await cl.request(C.SMP.READ, 67, 0, {})).seq, 1);
+    t.eq(tr.sent.length, 2);
+  });
+
+  test("client: no answer after the retry is a TransportError", async (C) => {
+    const tr = echoTransport(C, { drop: 5 });
+    const cl = new C.SmpClient(tr, { timeoutMs: 20 });
+    const e = await t.rejects(cl.request(C.SMP.READ, 67, 0, {}), /no answer/);
+    t.ok(e instanceof C.TransportError);
+    t.eq(tr.sent.length, 2, "two attempts");
+  });
+
+  test("client: per-request timeout and retries", async (C) => {
+    const tr = echoTransport(C, { drop: 5 });
+    const cl = new C.SmpClient(tr, { timeoutMs: 5000 });
+    const t0 = Date.now();
+    await t.rejects(cl.request(C.SMP.READ, 67, 0, {}, { timeoutMs: 20, retries: 0 }), /no answer/);
+    t.ok(Date.now() - t0 < 1000, "used the 20 ms timeout");
+    t.eq(tr.sent.length, 1);
+  });
+
+  test("client: a late answer to the first attempt counts", async (C) => {
+    const tr = echoTransport(C, { delayMs: 40 });
+    const cl = new C.SmpClient(tr, { timeoutMs: 25 });
+    t.eq((await cl.request(C.SMP.READ, 67, 0, {})).seq, 0, "the reply to seq 0 arrived during attempt 2");
+  });
+
+  test("client: replies for another request are ignored", async (C) => {
+    const tr = {
+      onPacket: null,
+      async send(frame) {
+        const m = C.smpParse(frame);
+        const p = (op, g, c, s) => C.smpFrame(op, g, c, s, C.cborEncode({ rc: 0, n: g + c + s }));
+        setTimeout(() => {
+          tr.onPacket(p(m.op + 1, 65, m.cmd, m.seq));
+          tr.onPacket(p(m.op + 1, m.group, 9, m.seq));
+          tr.onPacket(p(m.op + 1, m.group, m.cmd, m.seq + 1));
+          tr.onPacket(p(m.op, m.group, m.cmd, m.seq));
+          tr.onPacket(bytes(1, 0, 0, 9));
+          tr.onPacket(p(m.op + 1, m.group, m.cmd, m.seq));
+        }, 1);
+      },
+    };
+    const cl = new C.SmpClient(tr, { timeoutMs: 200 });
+    t.eq(await cl.request(C.SMP.READ, 67, 2, {}), { rc: 0, n: 69 });
+  });
+
+  test("client: non-zero rc is a DeviceError", async (C) => {
+    const tr = echoTransport(C, { rc: 8 });
+    const cl = new C.SmpClient(tr, { timeoutMs: 200 });
+    const e = await t.rejects(cl.request(C.SMP.READ, 67, 0, {}), /rc 8/);
+    t.ok(e instanceof C.DeviceError);
+    t.eq(e.rc, 8);
+  });
+
+  test("client: a closed link fails the waiting request at once", async (C) => {
+    const tr = { onPacket: null, onClose: null, async send() {} };
+    const cl = new C.SmpClient(tr, { timeoutMs: 5000 });
+    let told = null;
+    cl.onClose = (err) => {
+      told = err.message;
+    };
+    const p = cl.request(C.SMP.READ, 67, 0, {});
+    await sleep(5);
+    tr.onClose(new Error("unplugged"));
+    const e = await t.rejects(p, /closed/);
+    t.ok(e instanceof C.TransportError);
+    t.eq(told, "unplugged");
+    await t.rejects(cl.request(C.SMP.READ, 67, 0, {}), /not connected/);
+  });
+
+  test("client: a failing write is a TransportError", async (C) => {
+    const tr = {
+      onPacket: null,
+      async send() {
+        throw new Error("device lost");
+      },
+    };
+    const cl = new C.SmpClient(tr, { timeoutMs: 200 });
+    const e = await t.rejects(cl.request(C.SMP.READ, 67, 0, {}), /sending failed: device lost/);
+    t.ok(e instanceof C.TransportError);
+  });
+
   // end of tests
 
   async function runOne(fn, C, env) {

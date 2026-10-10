@@ -217,6 +217,116 @@ body {
   }
 
   Object.assign(C, { cborEncode, cborDecode, SMP, smpFrame, smpRequest, smpParse });
+
+  /* DeviceError: the keyboard answered with a non-zero rc. TransportError: no
+   * answer (after the retry), the link closed, or a write failed; the page
+   * then reports the connection as lost. */
+  class DeviceError extends Error {
+    constructor(rc) {
+      super("the keyboard refused the request (rc " + rc + ")");
+      this.name = "DeviceError";
+      this.rc = rc;
+    }
+  }
+
+  class TransportError extends Error {
+    constructor(message) {
+      super(message);
+      this.name = "TransportError";
+    }
+  }
+
+  /* One request at a time over a transport: {send(frame) -> Promise, onPacket,
+   * onClose, close()}; the transport calls onPacket(frame) for every SMP frame
+   * it receives and onClose(err) when the link goes away. A reply matches by
+   * op, group, command and the sequence number of any attempt of the request,
+   * so a late answer to the first attempt still counts. timeoutMs per attempt
+   * (2 s USB, 5 s Bluetooth), retries more attempts (1). */
+  class SmpClient {
+    constructor(transport, opts) {
+      this.transport = transport;
+      this.timeoutMs = opts.timeoutMs;
+      this.retries = opts.retries === undefined ? 1 : opts.retries;
+      this.seq = 0;
+      this.queue = Promise.resolve();
+      this.waiting = null;
+      this.closed = false;
+      this.onClose = null;
+      transport.onPacket = (frame) => this._packet(frame);
+      transport.onClose = (err) => this._lost(err);
+    }
+
+    /* -> the reply body; opts {timeoutMs, retries} override the defaults. */
+    request(op, group, cmd, body, opts) {
+      const run = () => this._request(op, group, cmd, body || {}, opts || {});
+      const p = this.queue.then(run, run);
+      this.queue = p.catch(() => {});
+      return p;
+    }
+
+    async _request(op, group, cmd, body, opts) {
+      const timeoutMs = opts.timeoutMs === undefined ? this.timeoutMs : opts.timeoutMs;
+      const retries = opts.retries === undefined ? this.retries : opts.retries;
+      const seqs = [];
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        if (this.closed) throw new TransportError("not connected");
+        const seq = this.seq;
+        this.seq = (this.seq + 1) & 255;
+        seqs.push(seq);
+        let timer;
+        const answer = new Promise((resolve) => {
+          this.waiting = { op: op + 1, group, cmd, seqs, resolve };
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        });
+        try {
+          await this.transport.send(smpRequest(op, group, cmd, seq, body));
+        } catch (e) {
+          clearTimeout(timer);
+          this.waiting = null;
+          throw new TransportError("sending failed: " + ((e && e.message) || e));
+        }
+        const msg = await answer;
+        clearTimeout(timer);
+        this.waiting = null;
+        if (msg && msg.closed) throw new TransportError("the connection closed");
+        if (msg) {
+          const b = msg.body && typeof msg.body === "object" ? msg.body : {};
+          const rc = typeof b.rc === "number" ? b.rc : (b.err && b.err.rc) || 0;
+          if (rc) throw new DeviceError(rc);
+          return b;
+        }
+      }
+      throw new TransportError("no answer from the keyboard");
+    }
+
+    _packet(frame) {
+      const w = this.waiting;
+      if (!w) return;
+      let msg;
+      try {
+        msg = smpParse(frame);
+      } catch (e) {
+        return;
+      }
+      if (msg.op !== w.op || msg.group !== w.group || msg.cmd !== w.cmd || !w.seqs.includes(msg.seq)) return;
+      w.resolve(msg);
+    }
+
+    _lost(err) {
+      if (this.closed) return;
+      this.closed = true;
+      if (this.waiting) this.waiting.resolve({ closed: true });
+      if (this.onClose) this.onClose(err);
+    }
+
+    /* The page ends the link itself: no onClose. */
+    close() {
+      this.closed = true;
+      if (this.waiting) this.waiting.resolve({ closed: true });
+    }
+  }
+
+  Object.assign(C, { DeviceError, TransportError, SmpClient });
   // end of SMP + CBOR
 })();
 </script>
