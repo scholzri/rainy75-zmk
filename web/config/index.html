@@ -1856,6 +1856,7 @@ button.mv { padding: .1rem .5rem; }
   let conn = null; /* {kind, transport, client, model, rows, throttleMs} */
   let busy = false; /* connecting */
   let blePicker = false; /* the remembered keyboard did not answer: use the picker */
+  let again = false; /* a port appeared while busy: look again */
 
   /* h("p", {class: "help", onclick: fn}, "text", child) -> element */
   function h(tag, attrs, ...kids) {
@@ -1920,6 +1921,7 @@ button.mv { padding: .1rem .5rem; }
     }
     if (conn !== me) return;
     setState(STATE[kind]);
+    say("");
     $("fw").textContent = firmwareText(model.firmware);
     pollLoop(me);
   }
@@ -1994,10 +1996,7 @@ button.mv { padding: .1rem .5rem; }
       say(C.errorText(e));
     }
     busy = false;
-    if (found) {
-      say("");
-      return attach("usb", found.transport, found.client);
-    }
+    if (found) return attach("usb", found.transport, found.client);
     setState("Not connected");
     buttons();
   }
@@ -2044,6 +2043,7 @@ button.mv { padding: .1rem .5rem; }
   /* Page load: a port or keyboard granted on an earlier visit, no picker. */
   async function autoConnect(useBle) {
     busy = true;
+    again = false;
     buttons();
     let found = null;
     let kind = "usb";
@@ -2063,6 +2063,7 @@ button.mv { padding: .1rem .5rem; }
     if (found && !conn) return attach(kind, found.transport, found.client);
     if (!conn) setState("Not connected");
     buttons();
+    if (again && !conn) return autoConnect(false);
   }
 
   function startDemo() {
@@ -2448,7 +2449,8 @@ button.mv { padding: .1rem .5rem; }
     }
     if (hasSerial) {
       navigator.serial.addEventListener("connect", () => {
-        if (!conn && !busy) autoConnect(false);
+        if (busy) again = true;
+        else if (!conn) autoConnect(false);
       });
     }
     autoConnect(true);

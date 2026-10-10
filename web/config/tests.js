@@ -2346,6 +2346,78 @@
     }
   });
 
+  /* index.html without ?demo, in a frame whose navigator has a fake Web
+   * Serial and a Web Bluetooth that knows no keyboard. The page is written
+   * into the frame after the fakes are in, so its first look at the browser
+   * finds them. opts: ports (the granted FakePorts), getPorts (replaces the
+   * default getPorts), requestDevice (the Bluetooth picker). */
+  async function openLive(env, opts = {}) {
+    const f = document.createElement("iframe");
+    env.frames.append(f);
+    const w = f.contentWindow;
+    const serial = new EventTarget();
+    serial.ports = opts.ports || [];
+    serial.getPorts = opts.getPorts || (async () => serial.ports.slice());
+    serial.requestPort = async () => {
+      throw new DOMException("No port selected by the user.", "NotFoundError");
+    };
+    const bluetooth = {
+      getDevices: async () => [],
+      requestDevice: opts.requestDevice || (async () => {
+        throw new DOMException("User cancelled the requestDevice() chooser.", "NotFoundError");
+      }),
+    };
+    Object.defineProperty(w.navigator, "serial", { value: serial, configurable: true });
+    Object.defineProperty(w.navigator, "bluetooth", { value: bluetooth, configurable: true });
+    w.document.open();
+    w.document.write(env.html);
+    w.document.close();
+    const d = w.document;
+    return {
+      w, d, serial,
+      state: () => d.getElementById("state").textContent,
+      msg: () => (d.getElementById("msg").hidden ? "" : d.getElementById("msg").textContent),
+      close: () => f.remove(),
+    };
+  }
+
+  uiTest("ui: a keyboard plugged in again clears the old alert", async (C, env) => {
+    const port = new FakePort(C, new C.SimKeyboard());
+    const p = await openLive(env, { ports: [port] });
+    try {
+      await until(() => p.state() === "Connected over USB", 5000);
+      port.unplug();
+      await until(() => p.state() === "Connection lost");
+      t.eq(p.msg(), "Connection lost. Connect again.");
+      p.serial.ports = [new FakePort(C, new C.SimKeyboard())];
+      p.serial.dispatchEvent(new Event("connect"));
+      await until(() => p.state() === "Connected over USB", 5000);
+      t.eq(p.msg(), "", "the alert of the lost connection is gone");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: a keyboard that appears while the page is looking is found afterwards", async (C, env) => {
+    const kb = new FakePort(C, new C.SimKeyboard());
+    let first;
+    const scan = new Promise((resolve) => {
+      first = resolve;
+    });
+    let scans = 0;
+    const p = await openLive(env, { getPorts: async () => (++scans === 1 ? scan : [kb]) });
+    try {
+      await until(() => scans === 1);
+      t.eq(p.state(), "Looking for the keyboard");
+      p.serial.dispatchEvent(new Event("connect"));
+      first([]);
+      await until(() => p.state() === "Connected over USB", 5000);
+      t.eq(scans, 2, "one more look, after the first");
+    } finally {
+      p.close();
+    }
+  });
+
   // end of tests
 
   async function runOne(fn, C, env) {
