@@ -657,6 +657,10 @@ body {
     CHUNK: 20,
   };
   const BLE_FRAME_MAX = 2048; /* a longer "frame" is noise: start over */
+  const BLE_REQUEST_MS = 5000; /* SMP request timeout per attempt over Bluetooth */
+  const BLE_WRITE_MS = 5000; /* a send that is not done by then fails (SmpClient waits for send()) */
+  const BLE_STOP_MS = 1000; /* stopNotifications() that does not answer by then: disconnect anyway */
+  const BLE_SMP_MAX = 512; /* the firmware's mcumgr buffer (CONFIG_MCUMGR_TRANSPORT_NETBUF_SIZE) */
 
   class BleReassembler {
     constructor() {
@@ -695,6 +699,182 @@ body {
   }
 
   Object.assign(C, { BLE, BleReassembler, bleChunks });
+
+  /* Web Bluetooth. The SMP characteristic and its notifications need an
+   * authenticated bond (CONFIG_MCUMGR_TRANSPORT_BT_PERM_RW_AUTHEN), so a
+   * keyboard not paired with this computer fails at startNotifications(). */
+  const NOT_BONDED = 'The keyboard is not paired with this computer. Pair "Rainy 75 Pro" in the system ' +
+    "Bluetooth settings (type the code the computer shows, then Enter), then connect again.";
+
+  class NotBondedError extends Error {
+    constructor(cause) {
+      super(NOT_BONDED);
+      this.name = "NotBondedError";
+      this.cause = cause;
+    }
+  }
+
+  class BleTransport {
+    constructor(device) {
+      this.device = device;
+      this.kind = "ble";
+      this.rx = new BleReassembler();
+      this.char = null;
+      this.onPacket = null;
+      this.onClose = null;
+      this.closed = false;
+      this.writeMs = BLE_WRITE_MS;
+      this.stopMs = BLE_STOP_MS;
+      this.sending = new Set(); /* settle() of every send in flight */
+      this.tail = Promise.resolve(); /* the writes of the last send: the next one starts after them */
+      this._gone = () => {
+        if (this.closed) return;
+        this.closed = true;
+        this._failWrites(new Error("Bluetooth disconnected"));
+        if (this.onClose) this.onClose(new Error("Bluetooth disconnected"));
+      };
+      this._value = (e) => {
+        const v = e.target.value;
+        for (const p of this.rx.push(new Uint8Array(v.buffer, v.byteOffset, v.byteLength))) {
+          if (this.onPacket) this.onPacket(p);
+        }
+      };
+    }
+
+    async open() {
+      this.device.addEventListener("gattserverdisconnected", this._gone);
+      const server = await this.device.gatt.connect();
+      if (this.closed) {
+        /* the page gave up while the link was still being made */
+        this._disconnect();
+        throw new Error("closed while connecting");
+      }
+      const service = await server.getPrimaryService(BLE.SERVICE);
+      this.char = await service.getCharacteristic(BLE.CHAR);
+      this.char.addEventListener("characteristicvaluechanged", this._value);
+      try {
+        await this.char.startNotifications();
+      } catch (e) {
+        throw new NotBondedError(e);
+      }
+    }
+
+    _failWrites(err) {
+      for (const settle of Array.from(this.sending)) settle(err);
+    }
+
+    /* disconnect() also cancels a connect() that is still pending. */
+    _disconnect() {
+      try {
+        this.device.gatt.disconnect();
+      } catch (e) {
+        /* gone already */
+      }
+    }
+
+    /* Writes the chunks in order, each awaited; a send that was given up
+     * (job.stop) writes no more. */
+    async _write(packet, job) {
+      const noResponse = this.char.properties.writeWithoutResponse;
+      for (const c of bleChunks(packet)) {
+        if (job.stop) return;
+        if (noResponse) await this.char.writeValueWithoutResponse(c);
+        else await this.char.writeValueWithResponse(c);
+      }
+    }
+
+    /* Always settles: it fails when the link is lost or the transport closed
+     * while the writes are pending, and after writeMs, so SmpClient (which
+     * awaits it before its own timeout can fire) never hangs on a write that
+     * does not finish. A send starts after the writes of the one before it
+     * (also one that was given up), so chunks of two requests never mix. */
+    async send(packet) {
+      if (this.closed || !this.char) throw new Error("Bluetooth is not connected");
+      if (packet.length > BLE_SMP_MAX) {
+        throw new Error(`the request is ${packet.length} bytes, the keyboard takes at most ${BLE_SMP_MAX}`);
+      }
+      this.rx.reset();
+      const job = { stop: false };
+      const run = this.tail.then(() => this._write(packet, job));
+      this.tail = run.catch(() => {});
+      await new Promise((resolve, reject) => {
+        let timer = null;
+        const settle = (err) => {
+          clearTimeout(timer);
+          this.sending.delete(settle);
+          if (err) {
+            job.stop = true;
+            reject(err);
+          } else {
+            resolve();
+          }
+        };
+        this.sending.add(settle);
+        timer = setTimeout(() => settle(new Error("the write timed out")), this.writeMs);
+        run.then(() => settle(null), (e) => settle(e || new Error("the write failed")));
+      });
+    }
+
+    async close() {
+      this.closed = true;
+      this._failWrites(new Error("Bluetooth was closed"));
+      this.device.removeEventListener("gattserverdisconnected", this._gone);
+      if (this.char) {
+        this.char.removeEventListener("characteristicvaluechanged", this._value);
+        let timer;
+        const gaveUp = new Promise((resolve) => {
+          timer = setTimeout(resolve, this.stopMs);
+        });
+        try {
+          await Promise.race([this.char.stopNotifications(), gaveUp]);
+        } catch (e) {
+          /* gone already */
+        }
+        clearTimeout(timer);
+      }
+      this._disconnect();
+    }
+  }
+
+  /* -> {transport, client}; throws NotBondedError, or a TransportError when
+   * connecting takes longer than connectMs. */
+  async function openBle(device, connectMs = 15000) {
+    const transport = new BleTransport(device);
+    const opening = transport.open();
+    opening.catch(() => {});
+    let timer;
+    const late = new Promise((resolve, reject) => {
+      timer = setTimeout(() => reject(new C.TransportError("no Bluetooth connection")), connectMs);
+    });
+    try {
+      await Promise.race([opening, late]);
+    } catch (e) {
+      await transport.close();
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+    return { transport, client: new C.SmpClient(transport, { timeoutMs: BLE_REQUEST_MS, retries: 1 }) };
+  }
+
+  /* Later visits: a keyboard this page may use already (getDevices() is not
+   * in every browser). */
+  async function rememberedDevice(bluetooth) {
+    if (!bluetooth.getDevices) return null;
+    const devices = await bluetooth.getDevices();
+    return devices.find((d) => d.name === BLE.NAME) || null;
+  }
+
+  /* The picker lists the keyboard by name. The SMP service goes into
+   * optionalServices, not the filter: the keyboard does not advertise it, and
+   * a filter on it would hide the keyboard where the picker sees only
+   * advertisements. */
+  function pickDevice(bluetooth) {
+    return bluetooth.requestDevice({ filters: [{ name: BLE.NAME }], optionalServices: [BLE.SERVICE] });
+  }
+
+  Object.assign(C, { BLE_REQUEST_MS, BLE_WRITE_MS, BLE_STOP_MS, BLE_SMP_MAX, NOT_BONDED, NotBondedError, BleTransport,
+    openBle, rememberedDevice, pickDevice });
   // end of Bluetooth transport
 })();
 </script>

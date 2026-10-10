@@ -1379,6 +1379,311 @@
     t.ok(!port.readable.locked && !port.writable.locked);
   });
 
+  // ---- Task 10: Web Bluetooth transport ----
+
+  /* A Web Bluetooth device in software: the SMP characteristic joins the
+   * writes by the SMP header length, asks the SimKeyboard and notifies the
+   * reply in 20-byte pieces. bonded: false fails startNotifications() as an
+   * unpaired keyboard does. */
+  class FakeChar extends EventTarget {
+    constructor(C, dev) {
+      super();
+      this.C = C;
+      this.dev = dev;
+      this.properties = { writeWithoutResponse: true, notify: true };
+      this.writes = [];
+      this.rx = [];
+      this.value = null;
+    }
+
+    async startNotifications() {
+      if (!this.dev.bonded) throw new DOMException("GATT operation not authorized.", "SecurityError");
+      return this;
+    }
+
+    async stopNotifications() {
+      this.dev.stops++;
+    }
+
+    async writeValueWithoutResponse(chunk) {
+      this.writes.push(chunk.length);
+      this.rx.push(...chunk);
+      const need = this.rx.length >= 8 ? 8 + ((this.rx[2] << 8) | this.rx[3]) : Infinity;
+      if (this.rx.length < need) return;
+      const reply = this.dev.sim.handle(Uint8Array.from(this.rx.splice(0, need)));
+      setTimeout(() => {
+        for (const c of this.C.bleChunks(reply)) {
+          this.value = new DataView(c.buffer, c.byteOffset, c.byteLength);
+          this.dispatchEvent(new Event("characteristicvaluechanged"));
+        }
+      }, 2);
+    }
+  }
+
+  class FakeDevice extends EventTarget {
+    constructor(C, sim, opts = {}) {
+      super();
+      this.name = opts.name || "Rainy 75 Pro";
+      this.sim = sim;
+      this.bonded = opts.bonded !== false;
+      this.stops = 0;
+      this.disconnects = 0;
+      const dev = this;
+      const ch = (this.char = new FakeChar(C, this));
+      this.gatt = {
+        connected: false,
+        async connect() {
+          if (opts.hang) await new Promise(() => {});
+          if (opts.delay) await sleep(opts.delay);
+          this.connected = true;
+          return {
+            getPrimaryService: async (uuid) => {
+              dev.serviceUuid = uuid;
+              return {
+                getCharacteristic: async (uuid2) => {
+                  dev.charUuid = uuid2;
+                  return ch;
+                },
+              };
+            },
+          };
+        },
+        disconnect() {
+          this.connected = false;
+          dev.disconnects++;
+        },
+      };
+    }
+
+    drop() {
+      this.gatt.connected = false;
+      this.dispatchEvent(new Event("gattserverdisconnected"));
+    }
+  }
+
+  test("ble: the picker asks by name, with the SMP service allowed", async (C) => {
+    let asked = null;
+    const bt = {
+      requestDevice: async (o) => {
+        asked = o;
+        return "dev";
+      },
+    };
+    t.eq(await C.pickDevice(bt), "dev");
+    t.eq(asked, { filters: [{ name: "Rainy 75 Pro" }], optionalServices: ["8d53dc1d-1db7-4cd3-868b-8a527460aa84"] });
+  });
+
+  test("ble: a remembered keyboard without the picker", async (C) => {
+    const kb = new FakeDevice(C, null);
+    const other = new FakeDevice(C, null, { name: "Mouse" });
+    t.eq(await C.rememberedDevice({ getDevices: async () => [other, kb] }), kb);
+    t.eq(await C.rememberedDevice({ getDevices: async () => [other] }), null);
+    t.eq(await C.rememberedDevice({}), null, "no getDevices in this browser");
+  });
+
+  test("ble: settings over 20-byte writes and notifications", async (C) => {
+    const dev = new FakeDevice(C, new C.SimKeyboard());
+    const r = await C.openBle(dev);
+    t.eq([dev.serviceUuid, dev.charUuid], [C.BLE.SERVICE, C.BLE.CHAR]);
+    t.eq(r.client.timeoutMs, 5000);
+    const model = new C.ConfigModel(r.client);
+    await model.load();
+    t.eq(model.values.size, 21);
+    await model.set("rgb.cycle", ["plasma", "solid", "rain", "wave", "comet"]);
+    t.ok(Math.max(...dev.char.writes) === 20, "writes of at most 20 bytes");
+    t.eq(dev.sim.values["rgb.cycle"], ["plasma", "solid", "rain", "wave", "comet"]);
+    await r.transport.close();
+    t.eq([dev.stops, dev.disconnects], [1, 1]);
+  });
+
+  test("ble: a keyboard not paired with this computer", async (C) => {
+    const dev = new FakeDevice(C, new C.SimKeyboard(), { bonded: false });
+    const e = await t.rejects(C.openBle(dev), /not paired with this computer/);
+    t.ok(e instanceof C.NotBondedError);
+    t.eq(e.cause.name, "SecurityError");
+    t.eq(dev.disconnects, 1, "the link the page opened is closed again");
+  });
+
+  test("ble: connecting that takes too long", async (C) => {
+    const e = await t.rejects(C.openBle(new FakeDevice(C, null, { hang: true }), 30), /no Bluetooth connection/);
+    t.ok(e instanceof C.TransportError);
+  });
+
+  test("ble: a dropped link fails the waiting request and tells the page", async (C) => {
+    const sim = new C.SimKeyboard();
+    const dev = new FakeDevice(C, sim);
+    const r = await C.openBle(dev);
+    let lost = null;
+    r.client.onClose = (err) => {
+      lost = err.message;
+    };
+    sim.handle = () => C.smpFrame(9, 9, 9, 9, new Uint8Array(0));
+    const p = r.client.request(C.SMP.READ, 67, 0, {});
+    await sleep(10);
+    dev.drop();
+    await t.rejects(p, /closed/);
+    t.eq(lost, "Bluetooth disconnected");
+  });
+
+  /* Contracts of BleTransport. SmpClient awaits send() before its timeout can
+   * fire, so send() must always settle; the reassembler starts clean with
+   * every attempt; the writes of one request never mix with another's; a
+   * request fits the firmware's 512-byte mcumgr buffer. */
+
+  /* An open transport whose writes are logged as the first byte of each chunk
+   * (a packet filled with one value shows whose chunk it is). */
+  async function openLogged(C, ms = 3) {
+    const dev = new FakeDevice(C, new C.SimKeyboard());
+    const r = await C.openBle(dev);
+    const log = [];
+    dev.char.writeValueWithoutResponse = async (c) => {
+      log.push(c[0]);
+      await sleep(ms);
+    };
+    return { dev, r, log };
+  }
+
+  const stuck = () => new Promise(() => {});
+
+  test("ble: a notification may be a view into a bigger buffer", async (C) => {
+    const dev = new FakeDevice(C, new C.SimKeyboard());
+    const r = await C.openBle(dev);
+    const got = [];
+    r.transport.onPacket = (p) => got.push(p);
+    const frame = C.smpFrame(C.SMP.READ + 1, 67, 0, 7, new Uint8Array(0));
+    const heap = new Uint8Array(40).fill(0xee);
+    heap.set(frame, 11);
+    dev.char.value = new DataView(heap.buffer, 11, frame.length);
+    dev.char.dispatchEvent(new Event("characteristicvaluechanged"));
+    t.eq(got, [frame]);
+    await r.transport.close();
+  });
+
+  test("ble: every attempt starts with a clean reassembler", async (C) => {
+    const sim = new C.SimKeyboard();
+    const dev = new FakeDevice(C, sim);
+    const r = await C.openBle(dev);
+    r.client.timeoutMs = 40;
+    dev.char.value = new DataView(Uint8Array.of(1, 2, 3).buffer);
+    dev.char.dispatchEvent(new Event("characteristicvaluechanged"));
+    const info = await r.client.request(C.SMP.READ, 67, 0, {});
+    t.eq(info.n, 21, "after noise from before the request");
+    const handle = sim.handle.bind(sim);
+    let calls = 0;
+    sim.handle = (f) => {
+      const reply = handle(f);
+      return ++calls === 1 ? reply.slice(0, 12) : reply;
+    };
+    t.eq((await r.client.request(C.SMP.READ, 67, 0, {})).n, 21, "the retry after a cut reply");
+    t.eq(calls, 2);
+    await r.transport.close();
+  });
+
+  test("ble: the chunks of one request stay together", async (C) => {
+    const { r, log } = await openLogged(C);
+    await Promise.all([r.transport.send(new Uint8Array(45).fill(1)), r.transport.send(new Uint8Array(45).fill(2))]);
+    t.eq(log, [1, 1, 1, 2, 2, 2]);
+    await r.transport.close();
+  });
+
+  test("ble: a request over the keyboard's 512 bytes is never sent", async (C) => {
+    const { r, log } = await openLogged(C, 0);
+    t.eq(C.BLE_SMP_MAX, 512);
+    await t.rejects(r.transport.send(new Uint8Array(513)), /513 bytes.*512/);
+    t.eq(log, [], "nothing written");
+    await r.transport.send(new Uint8Array(512));
+    t.eq(log.length, 26, "512 bytes still fit");
+    const e = await t.rejects(r.client.request(C.SMP.WRITE, 67, 3, { k: "rgb.cycle", v: "x".repeat(600) }), /sending failed: .*512/);
+    t.ok(e instanceof C.TransportError);
+    t.eq(log.length, 26, "the client wrote nothing either");
+    await r.transport.close();
+  });
+
+  test("ble: a stalled write fails the request at its deadline", async (C) => {
+    const dev = new FakeDevice(C, new C.SimKeyboard());
+    const r = await C.openBle(dev);
+    t.ok(C.BLE_WRITE_MS <= r.client.timeoutMs, "no longer than the request timeout");
+    r.transport.writeMs = 40;
+    dev.char.writeValueWithoutResponse = stuck;
+    const t0 = Date.now();
+    const e = await t.rejects(r.client.request(C.SMP.READ, 67, 0, {}), /sending failed: .*timed out/);
+    t.ok(e instanceof C.TransportError);
+    t.ok(Date.now() - t0 < 1000, "not the 5 s request timeout");
+    await r.transport.close();
+  });
+
+  test("ble: after the deadline the rest of the request is never written", async (C) => {
+    const dev = new FakeDevice(C, new C.SimKeyboard());
+    const r = await C.openBle(dev);
+    r.transport.writeMs = 40;
+    const log = [];
+    let release = null;
+    dev.char.writeValueWithoutResponse = (c) => {
+      log.push(c[0]);
+      return c[0] === 1 ? new Promise((resolve) => (release = resolve)) : Promise.resolve();
+    };
+    await t.rejects(r.transport.send(new Uint8Array(45).fill(1)), /timed out/);
+    const next = r.transport.send(new Uint8Array(45).fill(2));
+    await sleep(10);
+    t.eq(log, [1], "the next request waits for the stalled write");
+    release();
+    await next;
+    t.eq(log, [1, 2, 2, 2], "chunks 2 and 3 of the abandoned request stay unwritten");
+    await r.transport.close();
+  });
+
+  test("ble: a link lost with a write pending fails the request", async (C) => {
+    const dev = new FakeDevice(C, new C.SimKeyboard());
+    const r = await C.openBle(dev);
+    let lost = null;
+    r.client.onClose = (err) => {
+      lost = err.message;
+    };
+    dev.char.writeValueWithoutResponse = stuck;
+    const p = r.client.request(C.SMP.READ, 67, 0, {});
+    await sleep(10);
+    dev.drop();
+    const e = await t.rejects(p, /sending failed: Bluetooth disconnected/);
+    t.ok(e instanceof C.TransportError);
+    t.eq(lost, "Bluetooth disconnected");
+    await t.rejects(r.transport.send(new Uint8Array(8)), /not connected/);
+    await r.transport.close();
+  });
+
+  test("ble: closing with a write pending fails it", async (C) => {
+    const dev = new FakeDevice(C, new C.SimKeyboard());
+    const r = await C.openBle(dev);
+    dev.char.writeValueWithoutResponse = stuck;
+    const p = r.transport.send(new Uint8Array(45).fill(1));
+    await sleep(10);
+    await r.transport.close();
+    await t.rejects(p, /closed/);
+    t.eq(dev.disconnects, 1);
+  });
+
+  test("ble: closing does not wait for a notification stop that never ends", async (C) => {
+    const dev = new FakeDevice(C, new C.SimKeyboard());
+    const r = await C.openBle(dev);
+    dev.char.stopNotifications = stuck;
+    r.transport.stopMs = 30;
+    await r.transport.close();
+    t.eq(dev.disconnects, 1, "the link is closed anyway");
+  });
+
+  test("ble: giving up on a connect still pending cancels it", async (C) => {
+    const dev = new FakeDevice(C, null, { hang: true });
+    await t.rejects(C.openBle(dev, 30), /no Bluetooth connection/);
+    t.eq(dev.disconnects, 1, "disconnect() is what cancels a connect() in progress");
+  });
+
+  test("ble: a connect that finishes after the page gave up is closed again", async (C) => {
+    const dev = new FakeDevice(C, null, { delay: 80 });
+    await t.rejects(C.openBle(dev, 30), /no Bluetooth connection/);
+    await sleep(120);
+    t.ok(!dev.gatt.connected, "no link left open");
+    t.eq(dev.serviceUuid, undefined, "no service lookup after giving up");
+  });
+
   // end of tests
 
   async function runOne(fn, C, env) {
