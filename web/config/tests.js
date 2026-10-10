@@ -78,6 +78,11 @@
     t.ok(!/connect-src/.test(m[1]), "no connect-src: default-src 'none' covers it");
   });
 
+  test("static: the off switch and a focused disabled button stay visible", (C, env) => {
+    t.ok(/input\[role="switch"\] \{[^}]*\n\s*background: var\(--muted\);/.test(env.html), "off track in the muted colour");
+    t.ok(/button\[aria-disabled="true"\]:focus-visible \{ opacity: 1; \}/.test(env.html), "focus ring at full opacity");
+  });
+
   test("static: nothing loaded from anywhere", (C, env) => {
     t.ok(!/<script[^>]*\ssrc=/i.test(env.html), "no script src");
     t.ok(!/<link[^>]*rel="stylesheet"/i.test(env.html), "no stylesheet link");
@@ -1722,9 +1727,10 @@
       t.ok(p.d.getElementById("hidden-note").hidden);
       t.ok(p.d.getElementById("intro").hidden && !p.d.getElementById("settings").hidden);
       t.ok(p.d.getElementById("btn-usb").hidden && p.d.getElementById("btn-disconnect").hidden);
+      t.eq(p.d.activeElement.id, "main", "focus moves into the settings when nothing had it");
       for (const el of p.d.querySelectorAll(".row > .control > [id]")) {
         t.ok(p.d.querySelector(`label[for="${el.id}"]`), "a label for " + el.id);
-        t.ok(p.d.getElementById(el.getAttribute("aria-describedby")), "help for " + el.id);
+        for (const d of el.getAttribute("aria-describedby").split(" ")) t.ok(p.d.getElementById(d), "help for " + el.id);
       }
     } finally {
       p.close();
@@ -1981,6 +1987,23 @@
     }
   });
 
+  uiTest("ui: a slider whose pointerup never came is not held after change", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const s = p.d.getElementById("set-rgb-val");
+      fire(s, "pointerdown");
+      s.value = 90;
+      fire(s, "input");
+      fire(s, "change");
+      await until(() => p.sim.values["rgb.val"] === 90);
+      p.sim.values["rgb.val"] = 60;
+      p.sim.rev++;
+      await until(() => s.value === "60", 3000);
+    } finally {
+      p.close();
+    }
+  });
+
   uiTest("ui: after release the slider shows what the keyboard stored", async (C, env) => {
     const p = await openDemo(env);
     try {
@@ -2066,7 +2089,7 @@
       const names = () => Array.from(p.d.querySelectorAll("#set-rgb-cycle li"), (li) => li.dataset.name);
       t.eq(names(), C.SIM_EFFECTS);
       p.d.getElementById("set-rgb-cycle-rainbow").click();
-      await until(() => p.sim.values["rgb.cycle"].length === 11);
+      await until(() => p.sim.values["rgb.cycle"].length === 11 && names()[11] === "rainbow");
       t.eq(p.sim.values["rgb.cycle"], C.SIM_EFFECTS.filter((n) => n !== "rainbow"));
       const up = p.d.querySelector('#set-rgb-cycle li[data-name="plasma"] [data-part="up"]');
       t.eq(up.getAttribute("aria-label"), "Move Plasma up");
@@ -2381,18 +2404,24 @@
     };
   }
 
-  uiTest("ui: a keyboard plugged in again clears the old alert", async (C, env) => {
+  uiTest("ui: a keyboard plugged in again clears the old alert, and focus follows the page", async (C, env) => {
     const port = new FakePort(C, new C.SimKeyboard());
     const p = await openLive(env, { ports: [port] });
     try {
       await until(() => p.state() === "Connected over USB", 5000);
+      t.eq(p.d.activeElement.id, "main", "focus moves into the settings when nothing had it");
       port.unplug();
       await until(() => p.state() === "Connection lost");
       t.eq(p.msg(), "Connection lost. Connect again.");
+      t.eq(p.d.activeElement.id, "btn-usb", "focus was in the settings: Connect USB takes it");
       p.serial.ports = [new FakePort(C, new C.SimKeyboard())];
       p.serial.dispatchEvent(new Event("connect"));
       await until(() => p.state() === "Connected over USB", 5000);
       t.eq(p.msg(), "", "the alert of the lost connection is gone");
+      p.d.getElementById("btn-disconnect").focus();
+      p.d.getElementById("btn-disconnect").click();
+      t.eq(p.state(), "Not connected");
+      t.eq(p.d.activeElement.id, "btn-usb", "focus was on Disconnect: Connect USB takes it");
     } finally {
       p.close();
     }

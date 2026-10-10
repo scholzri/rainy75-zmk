@@ -60,6 +60,7 @@ button {
 }
 button.primary { color: var(--accent-fg); background: var(--accent); border-color: var(--accent); }
 button:disabled, button[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+button[aria-disabled="true"]:focus-visible { opacity: 1; }
 main { max-width: 52rem; margin: 0 auto; padding: 1rem; }
 main:focus { outline: none; }
 .msg { max-width: 50rem; margin: 1rem auto 0; padding: .6rem .9rem; border-radius: .4rem; }
@@ -83,7 +84,7 @@ select { font: inherit; padding: .3rem; color: var(--fg); background: var(--card
 output { font-variant-numeric: tabular-nums; }
 input[role="switch"] {
   appearance: none; position: relative; width: 2.75rem; height: 1.5rem; margin: 0; cursor: pointer;
-  background: var(--line); border-radius: 1rem; transition: background .15s;
+  background: var(--muted); border-radius: 1rem; transition: background .15s;
 }
 input[role="switch"]::before {
   content: ""; position: absolute; top: .15rem; left: .15rem; width: 1.2rem; height: 1.2rem;
@@ -1922,12 +1923,15 @@ button.mv { padding: .1rem .5rem; }
     if (conn !== me) return;
     setState(STATE[kind]);
     say("");
+    const f = document.activeElement;
+    if (!f || f === document.body || f.closest("[hidden]")) $("main").focus({ preventScroll: true });
     $("fw").textContent = firmwareText(model.firmware);
     pollLoop(me);
   }
 
   function drop(me, state) {
     if (conn !== me) return;
+    const f = document.activeElement;
     conn = null;
     me.client.close();
     me.transport.close();
@@ -1935,6 +1939,9 @@ button.mv { padding: .1rem .5rem; }
     $("fw").textContent = "";
     setState(state);
     buttons();
+    if (!f || f === document.body || f.closest("#main, #btn-disconnect")) {
+      $((me.kind === "ble" && hasBle) || !hasSerial ? "btn-ble" : "btn-usb").focus();
+    }
   }
 
   function lost(me) {
@@ -2168,10 +2175,11 @@ button.mv { padding: .1rem .5rem; }
 
   function selectWidget(me, entry, info, id, helpId) {
     const names = C.visibleNames(entry);
-    const sel = h("select", { id, "aria-describedby": helpId },
+    const fx = C.nameHelp(entry.key, names[0]) !== null;
+    const sel = h("select", { id, "aria-describedby": helpId + (fx ? " " + id + "-fx" : "") },
       ...names.map((n) => h("option", { value: n }, C.nameLabel(entry.key, n))));
     const other = h("option", { value: "", disabled: true }, "Other (needs a newer page)");
-    const about = C.nameHelp(entry.key, names[0]) !== null ? h("p", { class: "help" }) : null;
+    const about = fx ? h("p", { class: "help", id: id + "-fx" }) : null;
     const describe = () => {
       if (about) about.textContent = sel.value ? C.nameLabel(entry.key, sel.value) + ": " + C.nameHelp(entry.key, sel.value) : "";
     };
@@ -2245,7 +2253,10 @@ button.mv { padding: .1rem .5rem; }
       show(Number(input.value));
       th.push(Number(input.value));
     });
-    input.addEventListener("change", () => th.flush(Number(input.value)));
+    input.addEventListener("change", () => {
+      held = false;
+      th.flush(Number(input.value));
+    });
     return {
       label: h("label", { for: id }, info.label),
       control: h("span", { class: "control" }, input, out),
