@@ -33,7 +33,10 @@ behavior (`zmk/src/behaviors/behavior_os_key.c`, decisions in `zmk/src/os_key/`)
   source (host, Fn keys). Hosts poll `info` and re-read values when `rev` changes. `rev`
   is not persistent: it restarts at 0 on every boot (loading `rgb.boot_effect` can already
   count as one change), so clients compare it for inequality only and re-read everything
-  after any (re)connect.
+  after any (re)connect. The one exception is `kb.os_keys`: it follows keymap edits
+  (a ZMK Studio set, save or discard, Restore Stock Settings) without a `rev` change, so a
+  client reads it explicitly (on connect, when it shows the Keyboard section or its warning,
+  or periodically) and never waits for `rev` to announce it.
 - `list` / `get` page: a reply holds as many entries as fit one mcumgr buffer (512 bytes),
   at least one; `next` is the index to ask for next, absent on the last page. `i` past the
   end gives an empty page (`s: []` or `v: {}`) and no `next`. The page size is an internal
@@ -168,6 +171,9 @@ read).
   any layer of the live keymap, counted on every read, so it follows ZMK Studio edits at once
   (saved or not). 2 with the default keymap; 0 means no key follows `kb.os` and
   `kb.gui_lock` (for example both keys rebound in ZMK Studio), and clients can warn then.
+  Keymap edits do not change `rev` (no setting changed, only the keymap it counts), so
+  this is the one setting a client has to read explicitly instead of waiting for `rev`: on
+  connect, when it shows the Keyboard section or the warning, or periodically.
   `set` and `reset` with it give `EACCESSDENIED`; a `reset` of all settings skips it.
 
 ## Storage
