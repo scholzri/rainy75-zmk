@@ -59,7 +59,8 @@ class Dfu:
         """One SMP request; returns the decoded response map."""
         c = self.client
         payload = smp.cbor_encode_map(pairs)
-        hdr = smp.smp_build_header(op, 0, len(payload), group, c.seq, cmd)
+        seq = c.seq
+        hdr = smp.smp_build_header(op, 0, len(payload), group, seq, cmd)
         c.seq = (c.seq + 1) & 0xFF
         frames = smp.smp_serial_encode(hdr + payload)
         for attempt in range(1 + retries):
@@ -68,7 +69,14 @@ class Dfu:
             for frame in frames:            # back to back: USB flow control
                 smp.os.write(c.fd, frame)
             try:
-                raw = c._read_response(timeout_s=timeout_s)
+                # Skip replies to someone else's request (a stale one left
+                # in the port by a program that had it open): match the seq.
+                end = time.monotonic() + timeout_s
+                while True:
+                    raw = c._read_response(
+                        timeout_s=max(0.1, end - time.monotonic()))
+                    if len(raw) > 6 and raw[6] == seq:
+                        break
                 break
             except TimeoutError:
                 if attempt == retries:

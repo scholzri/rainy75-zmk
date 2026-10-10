@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <stdint.h>
 #include "effects.h"
 
@@ -225,3 +226,7 @@ const struct rrgb_effect rrgb_effects[] = {
 #endif
 };
 const uint16_t rrgb_effect_count = sizeof(rrgb_effects) / sizeof(rrgb_effects[0]);
+
+const char *rrgb_effect_name(uint8_t idx) {
+    return idx < rrgb_effect_count ? rrgb_effects[idx].name : NULL;
+}

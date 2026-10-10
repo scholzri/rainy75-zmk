@@ -153,9 +153,9 @@ class Rainy75BLE:
         self._response = frame
         self._resp_event.set()
 
-    async def _request(self, op, cmd, payload_map):
+    async def _request(self, op, cmd, payload_map, group=RGB_GROUP):
         cbor = _cbor_map(payload_map)
-        hdr = struct.pack(">BBHHBB", op, 0, len(cbor), RGB_GROUP,
+        hdr = struct.pack(">BBHHBB", op, 0, len(cbor), group,
                           self.seq & 0xFF, cmd)
         self.seq += 1
         frame = hdr + cbor

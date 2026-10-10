@@ -357,33 +357,74 @@ static bool host_mode_escape(void) {
     return true;
 }
 
+__weak void rrgb_state_changed_hook(void) {}
+
+/* Every change of the persisted state: save it and tell the settings. */
+static void state_changed(void) {
+    rrgb_request_save();
+    rrgb_state_changed_hook();
+}
+
 void rrgb_toggle(void) {
     if (host_mode_escape()) { return; }
     rt.on = !rt.on;
     LOG_INF("rgb %s", rt.on ? "on" : "off");
-    rrgb_request_save();
+    state_changed();
 }
 void rrgb_next_effect(void) {
     if (host_mode_escape()) { return; }
     rt.effect = (rt.effect + 1) % rrgb_effect_count;
     LOG_INF("effect %u (%s)", rt.effect, rrgb_effects[rt.effect].name);
-    rrgb_request_save();
+    state_changed();
 }
 void rrgb_hue_step(int dir) {
     if (host_mode_escape()) { return; }
-    rt.hue += (dir >= 0) ? 8 : (uint8_t)-8; rrgb_request_save();
+    rt.hue += (dir >= 0) ? 8 : (uint8_t)-8; state_changed();
 }
 void rrgb_val_step(int dir) {
     if (host_mode_escape()) { return; }
     int v = rt.val + (dir >= 0 ? 16 : -16);
     rt.val = (v < 16) ? 16 : (v > 255 ? 255 : v);
-    rrgb_request_save();
+    state_changed();
 }
 void rrgb_speed_step(int dir) {
     if (host_mode_escape()) { return; }
     int s = rt.speed + (dir >= 0 ? 8 : -8);
     rt.speed = (s < 1) ? 1 : (s > 255 ? 255 : s);
-    rrgb_request_save();
+    state_changed();
+}
+
+uint32_t rrgb_param_get(uint8_t p) {
+    switch (p) {
+    case RRGB_P_ON: return rt.on;
+    case RRGB_P_EFFECT: return rt.effect;
+    case RRGB_P_HUE: return rt.hue;
+    case RRGB_P_SAT: return rt.sat;
+    case RRGB_P_VAL: return rt.val;
+    case RRGB_P_SPEED: return rt.speed;
+    default: return 0;
+    }
+}
+
+void rrgb_param_set(uint8_t p, uint32_t v) {
+    switch (p) {
+    case RRGB_P_ON: rt.on = (v != 0); break;
+    case RRGB_P_EFFECT:
+        if (v >= rrgb_effect_count) { return; }
+        rt.effect = v;
+        break;
+    case RRGB_P_HUE: rt.hue = (uint8_t)v; break;
+    case RRGB_P_SAT: rt.sat = (uint8_t)v; break;
+    case RRGB_P_VAL: rt.val = (v < 16) ? 16 : (v > 255 ? 255 : v); break;
+    case RRGB_P_SPEED: rt.speed = (v < 1) ? 1 : (v > 255 ? 255 : v); break;
+    default: return;
+    }
+    host_mode = false;   /* a setting from a host shows the effect again */
+    state_changed();
+}
+
+void rrgb_apply_boot_effect(uint8_t effect) {
+    if (effect < rrgb_effect_count) { rt.effect = effect; }
 }
 
 /* --- Host direct-pixel API (called from the mcumgr SMP thread) --- */

@@ -25,6 +25,7 @@ All technical findings are in `docs/`:
 - [docs/zmk-firmware.md](docs/zmk-firmware.md) — ZMK firmware build, BLE HCI driver, board definition, workspace layout
 - [docs/open-ble-controller.md](docs/open-ble-controller.md): open BLE link layer (issue #13): architecture, build, status, sniffer workflow
 - [docs/rainy-rgb.md](docs/rainy-rgb.md): rainy_rgb out-of-tree lighting engine: 12 effects + opt-in walker diagnostic, XY calibration, functional indicators (CapsLock/Fn-highlight/battery/BLE slot status + passkey guidance), controls, build/flash
+- [docs/config-protocol.md](docs/config-protocol.md): runtime settings over mcumgr group 67 (registry, storage `rainy_cfg`, commands, types, compatibility rules); CLI `reverse/tools/rainy75_cfg.py`
 - [docs/architecture.md](docs/architecture.md) — MCU, USB, HID interfaces, RGB, battery, connection modes
 - [docs/gpio-matrix.md](docs/gpio-matrix.md) — GPIO pins, matrix scan, timing, keymap, Fn combos
 - [docs/firmware-analysis.md](docs/firmware-analysis.md) — Ghidra, 211 functions, key pipeline, SRAM buffers, decompilation
@@ -66,6 +67,7 @@ zmk/                             # Zephyr module — our custom firmware code
   src/poweroff.c                 # Deep sleep: z_sys_poweroff() — deep retention 64K with GPIO wakeup
   src/flash_mgmt.c               # Custom mcumgr group 64: raw flash erase/write/read/commit + RAM trampoline
   src/openll_mgmt.c              # Custom mcumgr group 66: open controller power/link/adv/flash-window counters (reverse/tools/openll_stats.py)
+  src/config/                    # runtime settings: pure registry (host tests in tests/), table, rainy_cfg storage, mcumgr group 67 (docs/config-protocol.md)
   src/rainy_rgb/                 # rainy_rgb lighting engine (color/effects/engine/reactive/overlay/led_map/state/zmk_adapter) — see docs/rainy-rgb.md
   src/behaviors/behavior_rainy_rgb.c  # &rgb keymap behavior (toggle/effect/hue/bright/speed/battery)
   src/behaviors/behavior_bt_sel_ble.c # &bt_sel_ble N: select BLE profile N and switch the output USB -> BLE (Fn+F1..F3)
@@ -96,7 +98,7 @@ reverse/
   firmware/                      # firmware_extracted.bin, firmware_ota.bin, HID descriptors, keymap dump
   scripts/                       # ghidra_reexport.py, apply_names.py, common.py, call_graph.py, constant_fingerprint.py, map_gp_data.py, import_registers.py
     obsolete/                    # archived one-time/superseded scripts (20 scripts)
-  tools/                         # rainy75_dfu.py (fast USB firmware update), ota_flasher.py, prepare_ota.py, restore_original.py, via_probe.py, via_dump_keymap.py, probe_commands.py, mem_reader.py, wob_probe.py
+  tools/                         # rainy75_dfu.py (fast USB firmware update), rainy75_cfg.py (runtime settings), ota_flasher.py, prepare_ota.py, restore_original.py, via_probe.py, via_dump_keymap.py, probe_commands.py, mem_reader.py, wob_probe.py
     sws_flash.sh                 # Stage 0-1+ helper: dump/analyze/roundtrip/flash/restore via BDT+EVK
     bdt/                         # Telink BDT v2.2.1 (Linux x64), EVK firmware v4.7, udev rules, docs
   ghidra/                        # rainy75_andesv5 project + scripts (ApplyAllNames.java, BSim, export)

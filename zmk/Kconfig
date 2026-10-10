@@ -114,6 +114,20 @@ config RGB_MGMT_HOST_TIMEOUT_S
 	  deliberately static "fill and walk away" also reverts after this long.
 	  Set 0 to disable and restore the old indefinite behaviour.
 
+config RAINY75_CONFIG
+	bool "Runtime settings (registry, storage, mcumgr group 67)"
+	default n
+	depends on MCUMGR && SETTINGS && RAINY_RGB
+	# set requests nest root map > "v" list
+	select MCUMGR_SMP_CBOR_MIN_DECODING_LEVEL_2
+	# list replies nest root map > "s" list > entry list > names list
+	select MCUMGR_SMP_CBOR_MIN_ENCODING_LEVEL_4 if ZCBOR_CANONICAL
+	help
+	  Named settings (rgb.effect, rgb.boot_effect, ...) that a host reads
+	  and writes over mcumgr group 67 (USB and Bluetooth), stored in the
+	  settings subtree rainy_cfg. See docs/config-protocol.md and
+	  reverse/tools/rainy75_cfg.py.
+
 config RAINY_RGB_ANSI_LEDMAP
 	bool "ANSI LED map (strip has no LED at the ISO <> slot)"
 	depends on RAINY_RGB
