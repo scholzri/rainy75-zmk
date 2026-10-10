@@ -295,7 +295,7 @@ int cfg_set(uint8_t i, const struct cfg_value *in, struct cfg_value *stored) {
     put(i, &v);
     __atomic_fetch_add(&rev, 1, __ATOMIC_RELAXED);
     if (!(defs[i].flags & CFG_F_PROXY)) {
-        __atomic_fetch_or(&dirty, 1u << i, __ATOMIC_RELAXED);
+        __atomic_fetch_or(&dirty, 1u << i, __ATOMIC_RELEASE);
         notify(i);
     }
     if (stored != NULL) {
@@ -370,6 +370,8 @@ uint32_t cfg_rev(void) { return __atomic_load_n(&rev, __ATOMIC_RELAXED); }
 
 void cfg_note_change(void) { __atomic_fetch_add(&rev, 1, __ATOMIC_RELAXED); }
 
-uint32_t cfg_take_dirty(void) { return __atomic_exchange_n(&dirty, 0, __ATOMIC_RELAXED); }
+/* Release (cfg_set, cfg_mark_dirty) / acquire (cfg_take_dirty): the store
+ * sees the value that was stored before its dirty bit was published. */
+uint32_t cfg_take_dirty(void) { return __atomic_exchange_n(&dirty, 0, __ATOMIC_ACQUIRE); }
 
-void cfg_mark_dirty(uint32_t mask) { __atomic_fetch_or(&dirty, mask, __ATOMIC_RELAXED); }
+void cfg_mark_dirty(uint32_t mask) { __atomic_fetch_or(&dirty, mask, __ATOMIC_RELEASE); }
