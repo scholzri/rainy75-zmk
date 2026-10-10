@@ -792,7 +792,8 @@ The Telink reference board (`tlsr9518adk80d`) uses 64K boot + 448K slots + 16K s
 
 - **Layer 0** — default: ESC, F1-F12, full alphanumeric, ISO hash, NUBS (`<>` key)
 - **Layer 1** — Fn: Studio unlock (ESC), BT profile select (F1-F3), output toggle (F4), media keys (F5-F12), RGB controls
-- Left GUI and left Alt are `&os_key LGUI` and `&os_key LALT` in both layouts (positions 74 and 75; see OS key behavior below). Right Alt stays `&kp RALT`.
+
+On layer 0 of both layouts, left GUI and left Alt are `&os_key LGUI` and `&os_key LALT` (positions 74 and 75; see OS key behavior below); right Alt stays `&kp RALT`.
 
 ### OS key behavior
 
