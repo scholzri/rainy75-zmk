@@ -277,8 +277,11 @@ on every polled change and `ble leds: <event> slot n digits d` per auth event.
 `rgb.idle_s` (0..3600 s, default 0 = never) and `rgb.idle_mode` (`off` default, `dim`):
 after that long without a key position event (press or release) the effect turns off
 (`off`) or renders at a quarter of its brightness (`dim`); the next key event brings it
-back at once. A settings change from a host (`rainy75_cfg.py set`, the config page)
-restarts the timer too, so the change shows. The functional overlays (CapsLock,
+back at once. A change of a lighting or indicator setting from a host (`rainy75_cfg.py
+set`, the config page) restarts the timer too, so the change shows: the six state-record
+settings (`rgb.on`, `rgb.effect`, `rgb.hue`, `rgb.sat`, `rgb.val`, `rgb.speed`),
+`rgb.val_battery`, `rgb.idle_*` and `ind.*`; `rgb.cycle` and `rgb.boot_effect` do not. The
+functional overlays (CapsLock,
 Fn-highlight, battery gauge, BLE status and passkey guidance) keep showing while idle
 (the CapsLock tint only with `dim`, it needs the effect);
 host direct mode (`rgb_mgmt`) overrides idle off, so a host notification pulse still shows
@@ -294,7 +297,11 @@ change. "USB host connected" is ZMK's `zmk_usb_is_hid_ready()`: a host configure
 keyboard, also while it suspends the bus (PC asleep); pulling the cable goes through a bus
 reset, which clears it. This board has no VBUS detection, so `zmk_usb_is_powered()` would
 stay true on battery. `zmk_adapter.c` follows the state through
-`zmk_usb_conn_state_changed` and logs `usb host connected` / `usb host gone`.
+`zmk_usb_conn_state_changed` and hands it to `rrgb_set_usb_host()` in `engine.c`, which
+logs `usb host connected` / `usb host gone` on a change. Known limit: if the PC put the USB
+bus to sleep and the cable is then pulled, the keyboard can still count as connected to a
+USB host (no cap, no low-battery pulse) until the next USB event; with output USB the first
+keypress clears it, with output BLE it can persist.
 
 ## LED power rail auto-cut (PC2)
 
@@ -422,7 +429,7 @@ when the host really is gone. The trade-off is that a deliberately static
 disable and restore indefinite host mode.
 
 `beat` is the **render-loop heartbeat**, advancing once per loop iteration
-whether or not a frame is drawn, so an idle-blanked board still beats (the
+whether or not a frame is drawn, so a board in idle off still beats (the
 private `rt.tick` frame counter deliberately does *not*, and is the wrong thing
 to watch here). Sample `info` twice a second apart: if `beat` does not move, the
 render thread is dead. That case is worth calling out because every other signal

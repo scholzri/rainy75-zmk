@@ -24,8 +24,10 @@
  * turns negative (still off); only after ~2^32 frames could one reappear.
  *
  * Threads: zmk_adapter.c calls the slot/output/event setters from one work
- * item on the system workqueue and set_fn from the ZMK layer listener (each
- * variable has one writer); render/active run on the render thread. Single
+ * item on the system workqueue and set_fn from the ZMK layer listener;
+ * s_guide is written by rrgb_ble_set_passkey_guide() from the settings path
+ * (the mcumgr SMP work queue at runtime, the main thread at boot load). One
+ * writer per variable; render/active run on the render thread. Single
  * core, so a torn read is a one-frame glitch. */
 
 enum anim_kind { ANIM_NONE = 0, ANIM_CONN, ANIM_FLASH, ANIM_SELECT };

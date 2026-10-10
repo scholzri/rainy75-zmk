@@ -61,7 +61,10 @@ void rrgb_set_val_battery(uint8_t cap);
  * (enum rrgb_idle_mode in lighting.h); the overlays keep showing. */
 void rrgb_set_idle_timeout(uint16_t seconds, uint8_t mode);
 /* Restart the idle timer: every key position event (rrgb_on_key) and every
- * settings change, so a change made from a host shows on an idle board. */
+ * change of a lighting or indicator setting (the six state-record settings
+ * through rrgb_param_set(); rgb.val_battery, rgb.idle_* and ind.* through
+ * config/cfg_table.c), so a change made from a host shows on an idle board.
+ * rgb.cycle and rgb.boot_effect do not restart it. */
 void rrgb_note_activity(void);
 /* A USB host has configured the keyboard, also while it suspends the bus
  * (zmk_adapter.c: zmk_usb_is_hid_ready()). Default: no host. */

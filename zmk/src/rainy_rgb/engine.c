@@ -48,7 +48,7 @@ LOG_MODULE_REGISTER(rrgb_engine, CONFIG_LOG_DEFAULT_LEVEL);
 
 /* --- Black-box instrumentation (B91_DIAG_RGB_STATE) ---------------------
  * Chasing a dark-strip episode where the firmware was healthy, SMP answered,
- * host-mode frames were accepted (which overrides the idle blank) and the DMA
+ * host-mode frames were accepted (which overrides idle off) and the DMA
  * never reported a timeout — yet nothing lit, and only a USB resume restored
  * it.  That combination points at the LED rail being low while the render loop
  * believed it high: `rail_on` is loop-local state, so anything that drops PC2
@@ -258,15 +258,15 @@ static void rrgb_loop(void *a, void *b, void *c) {
     for (;;) {
         /* Liveness beat — deliberately NOT rt.tick, which only advances inside
          * render_once() and so freezes whenever the strip is legitimately dark
-         * (idle blank, RGB off). This counter advances once per iteration, so a
+         * (idle off, RGB off). This counter advances once per iteration, so a
          * caller can tell "thread is gone" from "thread is fine, nothing to
          * draw" — the two states the dark-strip bug made indistinguishable. */
         loop_beat++;
 
         /* Host-mode watchdog. Host mode is normally released by an explicit
          * clear, so a host that dies without sending one strands the board on
-         * its last frame indefinitely — the idle blank cannot rescue it (host
-         * mode overrides the blank by design) and on battery nothing else will.
+         * its last frame indefinitely; idle off cannot rescue it (host mode
+         * overrides it by design) and on battery nothing else will.
          * Undocking mid-animation is the case that bites: the link dies before
          * the host can retract the frame, and afterwards there is no host left
          * to send anything at all. Host animations refresh continuously, so a
