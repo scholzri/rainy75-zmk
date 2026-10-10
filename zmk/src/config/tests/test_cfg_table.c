@@ -11,8 +11,10 @@
  * names checks that, and the builds with the real effects.c fail as soon as
  * the effect table grows that far. With CONFIG_RAINY75_OS_KEY the real
  * os_key.c receives kb.os and kb.gui_lock, and kb.os_keys reads the count
- * stubbed here (bound); without it kb.os_keys reads 0. run_host_tests.sh
- * builds every variant.
+ * stubbed here (bound); without it kb.os_keys reads 0 and the two sets must
+ * still do nothing else. The two hooks cfg_table.c provides to the engine
+ * (rrgb_cycle_next_hook, rrgb_state_changed_hook) are called directly.
+ * run_host_tests.sh builds every variant.
  */
 
 #include <errno.h>
@@ -178,6 +180,12 @@ static void test_defaults_pushed(void) {
     CHECK(caps_style == RRGB_CAPS_KEY && caps_rgb == 0xFFFFFF);
     CHECK(fn_highlight && passkey_guide);
     CHECK(bat_low == 0);
+#ifdef CONFIG_RAINY75_OS_KEY
+    /* main() set the behavior to mac with the lock before the init: only the
+     * init push of kb.os and kb.gui_lock (win, no lock) puts it right. */
+    CHECK(os_key_press(74, OS_KEY_LGUI) == OS_KEY_LGUI && os_key_release(74) == OS_KEY_LGUI);
+    CHECK(os_key_press(75, OS_KEY_LALT) == OS_KEY_LALT && os_key_release(75) == OS_KEY_LALT);
+#endif
 }
 
 /* A set reaches its owner through push(), with the lighting idle restart. */
@@ -207,8 +215,10 @@ static void test_boot_effect(void) {
     CHECK(boot_effect == 1);
 }
 
-/* kb.os and kb.gui_lock reach the &os_key behavior; kb.os_keys is
- * read-only, counted on every read. */
+/* kb.os and kb.gui_lock reach the &os_key behavior (when the build has it);
+ * kb.os_keys is read-only, counted on every read. The sets and resets run in
+ * the build without the behavior too: push() must return early there as
+ * well, without the lighting idle restart. */
 static void test_kb(void) {
     const struct cfg_def *os = cfg_def(CFG_KB_OS), *keys_def = cfg_def(CFG_KB_OS_KEYS);
     struct cfg_value v = U(OS_KEY_OS_MAC);
@@ -224,21 +234,50 @@ static void test_kb(void) {
     bound = 0;
     CHECK(cfg_u(CFG_KB_OS_KEYS) == 0); /* a keymap saved without &os_key */
     CHECK(os_key_press(74, OS_KEY_LGUI) == OS_KEY_LGUI && os_key_release(74) == OS_KEY_LGUI);
-    CHECK(cfg_set(CFG_KB_OS, &v, NULL) == 0);
-    CHECK(os_key_press(74, OS_KEY_LGUI) == OS_KEY_LALT && os_key_release(74) == OS_KEY_LALT);
-    v = U(1);
-    CHECK(cfg_set(CFG_KB_GUI_LOCK, &v, NULL) == 0);
-    CHECK(os_key_press(75, OS_KEY_LALT) == 0); /* Command, locked */
-    CHECK(cfg_reset(CFG_KB_OS) == 0 && cfg_reset(CFG_KB_GUI_LOCK) == 0);
-    CHECK(os_key_press(74, OS_KEY_LGUI) == OS_KEY_LGUI && os_key_release(74) == OS_KEY_LGUI);
 #else
     CHECK(cfg_u(CFG_KB_OS_KEYS) == 0); /* no &os_key behavior in this build */
 #endif
-    CHECK(activity == before); /* not lighting settings: no idle restart */
+    CHECK(cfg_set(CFG_KB_OS, &v, NULL) == 0 && cfg_u(CFG_KB_OS) == OS_KEY_OS_MAC);
+#ifdef CONFIG_RAINY75_OS_KEY
+    CHECK(os_key_press(74, OS_KEY_LGUI) == OS_KEY_LALT && os_key_release(74) == OS_KEY_LALT);
+#endif
+    v = U(1);
+    CHECK(cfg_set(CFG_KB_GUI_LOCK, &v, NULL) == 0 && cfg_u(CFG_KB_GUI_LOCK) == 1);
+#ifdef CONFIG_RAINY75_OS_KEY
+    CHECK(os_key_press(75, OS_KEY_LALT) == 0); /* Command, locked */
+#endif
+    CHECK(cfg_reset(CFG_KB_OS) == 0 && cfg_reset(CFG_KB_GUI_LOCK) == 0);
+    CHECK(cfg_u(CFG_KB_OS) == OS_KEY_OS_WIN && cfg_u(CFG_KB_GUI_LOCK) == 0);
+#ifdef CONFIG_RAINY75_OS_KEY
+    CHECK(os_key_press(74, OS_KEY_LGUI) == OS_KEY_LGUI && os_key_release(74) == OS_KEY_LGUI);
+#endif
+    CHECK(activity == before); /* not lighting settings: no idle restart, with or without */
     v = U(5);
     CHECK(cfg_set(CFG_KB_OS_KEYS, &v, NULL) == -EACCES && cfg_reset(CFG_KB_OS_KEYS) == -EACCES);
     v = U(2);
     CHECK(cfg_set(CFG_KB_OS, &v, NULL) == -EINVAL); /* win and mac only */
+}
+
+/* The two hooks the engine calls (engine.c has weak defaults): Fn+Enter picks
+ * the next effect of rgb.cycle, and a changed state record bumps rev. */
+static void test_hooks(void) {
+    struct cfg_value v = {.len = 2, .idx = {2, 0}};
+    uint32_t rev;
+
+    CHECK(rrgb_cycle_next_hook(0) == 1); /* default list: table order */
+    CHECK(cfg_set(CFG_RGB_CYCLE, &v, NULL) == 0);
+    CHECK(rrgb_cycle_next_hook(2) == 0); /* the entry after 2 */
+    CHECK(rrgb_cycle_next_hook(0) == 2); /* wraps to the first entry */
+    CHECK(rrgb_cycle_next_hook(5) == 2); /* not listed: the first entry */
+    v.len = 0;
+    CHECK(cfg_set(CFG_RGB_CYCLE, &v, NULL) == 0);
+    CHECK(rrgb_cycle_next_hook(0) == 1); /* empty list: table order again */
+    CHECK(rrgb_cycle_next_hook(rrgb_effect_count - 1) == 0);
+    CHECK(cfg_reset(CFG_RGB_CYCLE) == 0);
+
+    rev = cfg_rev();
+    rrgb_state_changed_hook();
+    CHECK(cfg_rev() == rev + 1);
 }
 
 /* Only the build with more stub names than a list setting may have expects
@@ -250,6 +289,9 @@ static void test_kb(void) {
 #endif
 
 int main(void) {
+#ifdef CONFIG_RAINY75_OS_KEY
+    os_key_set_mode(OS_KEY_OS_MAC, true); /* not the defaults: see test_defaults_pushed() */
+#endif
     CHECK(test_sys_init() == 0);
     if (EXPECT_REFUSED) {
         /* no table at all (there was none before), and the error logged */
@@ -267,6 +309,7 @@ int main(void) {
         test_set_reaches_owner();
         test_boot_effect();
         test_kb();
+        test_hooks();
     }
     if (failed) {
         printf("%d check(s) failed\n", failed);
