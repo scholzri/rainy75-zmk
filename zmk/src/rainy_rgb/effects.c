@@ -62,12 +62,13 @@ void fx_aurora(struct rgb_frame *f) {
     }
 }
 
-/* Reactive: brightness flashes on each keypress (global), decays over ticks. */
+/* Reactive: brightness flashes on each keypress (global), decays over ticks.
+ * The flash goes above val, up to val_max (battery cap, idle dim). */
 void fx_reactive_pulse(struct rgb_frame *f) {
     uint32_t age = f->tick - f->last_press_tick;   /* frames since last press */
     uint8_t boost = (age < 32) ? (uint8_t)(255 - age * 8) : 0;   /* ~0.6 s @ 50 fps */
     uint8_t base = f->val / 5;
-    uint8_t v = (base + boost > 255) ? 255 : base + boost;
+    uint8_t v = (base + boost > f->val_max) ? f->val_max : base + boost;
     struct rrgb c = hsv2rgb(f->hue, f->sat, v);
     for (uint16_t i = 0; i < f->n; i++) { f->px[i] = c; }
 }

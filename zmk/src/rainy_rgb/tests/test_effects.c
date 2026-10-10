@@ -5,7 +5,8 @@
 int main(void) {
     struct rrgb px[83];
     struct rgb_frame f = { .px = px, .n = 83, .tick = 0,
-        .hue = 0, .sat = 255, .val = 255, .speed = 32, .xy = 0, .last_press_tick = 0 };
+        .hue = 0, .sat = 255, .val = 255, .val_max = 255, .speed = 32, .xy = 0,
+        .last_press_tick = 0 };
 
     /* registry has >= 2 effects and all have non-null render */
     CHECK(rrgb_effect_count >= 2);
@@ -51,6 +52,24 @@ int main(void) {
     uint8_t dim = f.px[0].r;
     CHECK(bright > dim);
 
+    /* reactive under the battery cap: the flash stops at val_max, from the
+       press on (age 0, boost 255) through the whole decay */
+    f.val = 32; f.val_max = 32; f.hue = 0; f.sat = 0;   /* white: r = g = b = v */
+    f.last_press_tick = 200;
+    uint8_t peak = 0;
+    for (uint32_t age = 0; age < 40; age++) {
+        f.tick = 200 + age; fx_reactive_pulse(&f);
+        for (int i = 0; i < 83; i++) {
+            uint8_t m = px[i].r > px[i].g ? px[i].r : px[i].g;
+            m = m > px[i].b ? m : px[i].b;
+            peak = m > peak ? m : peak;
+        }
+    }
+    CHECK(peak <= 32);
+    f.tick = 200; fx_reactive_pulse(&f);
+    CHECK(px[0].r == 32);                  /* the press still flashes, at the cap */
+    f.val = 200; f.val_max = 255; f.sat = 255;
+
     /* ripple: one active ring. radius = (age * (speed/16+1)*10) >> 4
      * = (16 * 50) >> 4 = 50, so the LED at distance 50 is on the ring;
      * origin (d=0) and far (d=150) are dark. */
@@ -59,20 +78,21 @@ int main(void) {
         struct rrgb_ripple rip[1] = { { .x=100, .y=50, .start_tick=0, .active=true } };
         struct rrgb px3[3];
         struct rgb_frame rf = { .px=px3, .n=3, .tick=16, .hue=0, .sat=255,
-            .val=255, .speed=64, .xy=xy3, .ripples=rip, .ripple_count=1 };
+            .val=255, .val_max=255, .speed=64, .xy=xy3, .ripples=rip, .ripple_count=1 };
         fx_ripple(&rf);
         CHECK((px3[0].r|px3[0].g|px3[0].b) == 0);   /* origin inside ring -> dark */
         CHECK((px3[1].r|px3[1].g|px3[1].b) != 0);   /* d=50 on the expanding ring -> lit */
         CHECK((px3[2].r|px3[2].g|px3[2].b) == 0);   /* d=150 far outside -> dark */
     }
     /* ripple NULL-safe */
-    { struct rrgb pxn[3]; struct rgb_frame rf = { .px=pxn, .n=3, .xy=0, .ripples=0 };
+    { struct rrgb pxn[3]; struct rgb_frame rf = { .px=pxn, .n=3, .val_max=255, .xy=0, .ripples=0 };
       fx_ripple(&rf); CHECK((pxn[0].r|pxn[0].g|pxn[0].b)==0); }
 
     {
         struct led_xy xyf[3] = { {10,10}, {120,50}, {250,90} };
         struct rrgb pxf[3];
-        struct rgb_frame wf = { .px=pxf, .n=3, .tick=5, .hue=0, .sat=255, .val=255, .speed=32, .xy=xyf };
+        struct rgb_frame wf = { .px=pxf, .n=3, .tick=5, .hue=0, .sat=255, .val=255, .val_max=255,
+            .speed=32, .xy=xyf };
         int any=0; for (uint32_t t=0;t<40;t++){ wf.tick=t; wf.phase=t*4; fx_wave(&wf);
             for(int i=0;i<3;i++) any|=pxf[i].r|pxf[i].g|pxf[i].b; }
         CHECK(any);                         /* wave lights pixels */
@@ -80,12 +100,13 @@ int main(void) {
          * one (deterministic, independent of the drops' random x positions). */
         struct led_xy xyr[22]; struct rrgb pxr[22];
         for (int i=0;i<22;i++){ xyr[i].x=(uint8_t)(i*12); xyr[i].y=100; }
-        struct rgb_frame rnf = { .px=pxr, .n=22, .hue=160, .sat=255, .val=255, .speed=32, .xy=xyr };
+        struct rgb_frame rnf = { .px=pxr, .n=22, .hue=160, .sat=255, .val=255, .val_max=255,
+            .speed=32, .xy=xyr };
         any=0; for (uint32_t t=0;t<120;t++){ rnf.tick=t; fx_rain(&rnf);
             for(int i=0;i<22;i++) any|=pxr[i].r|pxr[i].g|pxr[i].b; }
         CHECK(any);                         /* rain lights pixels over time */
         /* NULL-xy safe */
-        struct rgb_frame nf = { .px=pxf, .n=3, .xy=0 };
+        struct rgb_frame nf = { .px=pxf, .n=3, .val_max=255, .xy=0 };
         fx_wave(&nf); CHECK((pxf[0].r|pxf[0].g|pxf[0].b)==0);
         fx_rain(&nf); CHECK((pxf[0].r|pxf[0].g|pxf[0].b)==0);
     }
@@ -93,11 +114,12 @@ int main(void) {
     {
         uint8_t heat[3] = { 0, 200, 0 };
         struct rrgb pxh[3];
-        struct rgb_frame hf = { .px=pxh, .n=3, .hue=0, .sat=255, .val=255, .key_heat=heat };
+        struct rgb_frame hf = { .px=pxh, .n=3, .hue=0, .sat=255, .val=255, .val_max=255,
+            .key_heat=heat };
         fx_heatmap(&hf);
         CHECK((pxh[0].r|pxh[0].g|pxh[0].b) == 0);   /* cold = black */
         CHECK((pxh[1].r|pxh[1].g|pxh[1].b) != 0);   /* hot = lit */
-        struct rgb_frame nf = { .px=pxh, .n=3, .key_heat=0 };
+        struct rgb_frame nf = { .px=pxh, .n=3, .val_max=255, .key_heat=0 };
         fx_heatmap(&nf); CHECK((pxh[0].r|pxh[0].g|pxh[0].b)==0);  /* NULL-safe */
     }
     /* speedcolour: colour depth tracks total key heat — idle is paler and
@@ -105,7 +127,8 @@ int main(void) {
     {
         uint8_t idle[3] = { 0, 0, 0 }, burst[3] = { 255, 255, 255 };
         struct rrgb pxs[3];
-        struct rgb_frame sf = { .px=pxs, .n=3, .hue=0, .sat=255, .val=255, .key_heat=idle };
+        struct rgb_frame sf = { .px=pxs, .n=3, .hue=0, .sat=255, .val=255, .val_max=255,
+            .key_heat=idle };
         fx_speed_colour(&sf);
         CHECK((pxs[0].r|pxs[0].g|pxs[0].b) != 0);            /* idle = tint, not black */
         CHECK(memcmp(&pxs[0], &pxs[2], sizeof(pxs[0])) == 0); /* uniform */
@@ -121,7 +144,8 @@ int main(void) {
        edge) steps to the next index, wrapping; same tick = no step */
     {
         struct rrgb pxw[83];
-        struct rgb_frame wf = { .px = pxw, .n = 83, .val = 200, .last_press_tick = 5 };
+        struct rgb_frame wf = { .px = pxw, .n = 83, .val = 200, .val_max = 255,
+            .last_press_tick = 5 };
         int c, a = -1, b = -1, d = -1;
         fx_walker(&wf);
         c = 0; for (int i = 0; i < 83; i++) if (pxw[i].r|pxw[i].g|pxw[i].b) { c++; a = i; }

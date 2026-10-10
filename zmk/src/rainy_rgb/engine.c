@@ -203,6 +203,8 @@ static void render_once(enum rrgb_idle_state idle) {
         /* rgb.val, capped without a USB host (rgb.val_battery), a quarter of
          * that while idle "dim" */
         .val = rrgb_render_val(rt.val, val_battery, usb_host, idle),
+        /* the same limits for the reactive flash: 255 at the defaults */
+        .val_max = rrgb_render_val(255, val_battery, usb_host, idle),
         .speed = rt.speed,
         .xy = rrgb_led_xy, .last_press_tick = rt.last_press_tick,
         .ripples = rrgb_ripples(),
