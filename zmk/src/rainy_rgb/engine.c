@@ -194,6 +194,9 @@ static struct k_thread rrgb_thread;
 static void render_once(enum rrgb_idle_state idle) {
     /* idle "off": the effect layer is off, the overlays still show */
     bool effect_on = rt.on && idle != RRGB_IDLE_DARK;
+    /* CapsLock tint strength: the brightness the effect is drawn at (its
+     * rendered value times the gain), 0 while it is not drawn */
+    uint8_t tint_v = 0;
 
     rrgb_reactive_tick(rt.tick);
     anim_phase_q8 += rrgb_speed_increment(rt.speed);
@@ -221,6 +224,7 @@ static void render_once(enum rrgb_idle_state idle) {
         for (uint16_t i = 0; i < RRGB_N; i++) { pixels[i] = host_px[i]; }
     } else if (effect_on && effect_gain > 0) {
         rrgb_effects[rt.effect].render(&f);
+        tint_v = scale8(f.val, effect_gain);
         if (effect_gain < 255) {
             for (uint16_t i = 0; i < RRGB_N; i++) {
                 pixels[i].r = scale8(pixels[i].r, effect_gain);
@@ -236,7 +240,7 @@ static void render_once(enum rrgb_idle_state idle) {
          * functional overlays still show. */
         for (uint16_t i = 0; i < RRGB_N; i++) { pixels[i] = (struct rrgb){0, 0, 0}; }
     }
-    rrgb_overlay_render(pixels, RRGB_N, rt.tick);
+    rrgb_overlay_render(pixels, RRGB_N, rt.tick, tint_v);
     rrgb_strip_show(pixels, RRGB_N);
     rt.tick++;
 }

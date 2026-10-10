@@ -120,8 +120,12 @@ Rendered on top of the active effect — and **still shown when RGB is toggled o
 (they are functional, not decorative):
 
 - **CapsLock** → by `ind.caps_style`: `key` (default) lights the CapsLock key in
-  `ind.caps_color` (default white), `tint` mixes every LED 50/50 with the colour, `off`
-  shows nothing (`hid_indicators_changed`, bit 1). Requires
+  `ind.caps_color` (default white) at full strength, `tint` mixes every LED 50/50 with the
+  colour scaled to the effect's brightness (its rendered value after the battery cap and
+  idle dim, times the effect gain of the BLE fade; `tint_v` of `rrgb_overlay_render()`),
+  `off` shows nothing (`hid_indicators_changed`, bit 1). The tint is skipped while the Fn
+  overview shows and whenever the effect is not drawn (RGB off, idle off, faded out for
+  BLE, host direct mode), so it never keeps the LED rail on by itself. Requires
   `CONFIG_ZMK_HID_INDICATORS=y`. Over BLE, some hosts never send the LED report, so caps
   may not update on BLE.
 - **Fn-highlight** (`ind.fn_highlight`, default on) → while Fn (layer id 1) is held, the
@@ -275,7 +279,8 @@ after that long without a key position event (press or release) the effect turns
 (`off`) or renders at a quarter of its brightness (`dim`); the next key event brings it
 back at once. A settings change from a host (`rainy75_cfg.py set`, the config page)
 restarts the timer too, so the change shows. The functional overlays (CapsLock,
-Fn-highlight, battery gauge, BLE status and passkey guidance) keep showing while idle;
+Fn-highlight, battery gauge, BLE status and passkey guidance) keep showing while idle
+(the CapsLock tint only with `dim`, it needs the effect);
 host direct mode (`rgb_mgmt`) overrides idle off, so a host notification pulse still shows
 when the board is idle (that's when you're away). With idle off and no overlay active the
 strip is dark and the LED rail is cut after 2 s, as with RGB off. The timer is rainy_rgb's

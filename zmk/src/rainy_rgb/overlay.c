@@ -93,9 +93,16 @@ void rrgb_fn_mask_build(rrgb_dev_at_fn dev_at, void *ctx, uint16_t n, const char
 
 static bool fn_key(uint16_t pos) { return ((s_fn_mask[pos / 32] >> (pos % 32)) & 1u) != 0; }
 
-/* CapsLock shows: on, with a style that paints something. */
-static bool caps_shown(void) {
-    return s_caps && (s_caps_style == RRGB_CAPS_KEY || s_caps_style == RRGB_CAPS_TINT);
+/* CapsLock needs a frame of its own: on with the key style. The tint shows
+ * only on top of a drawn effect (tint_v), so it never keeps the frame loop
+ * or the LED rail on by itself. */
+static bool caps_key_shown(void) {
+    return s_caps && s_caps_style == RRGB_CAPS_KEY;
+}
+
+/* The Fn overview (ind.fn_highlight) replaces the lighting this frame. */
+static bool fn_overview(void) {
+    return s_fn && s_fn_highlight;
 }
 
 static struct rrgb rgb_of(uint32_t c) {
@@ -162,7 +169,7 @@ bool rrgb_overlay_key_reactive(uint32_t position, uint32_t tick) {
 }
 
 bool rrgb_overlay_active(uint32_t tick) {
-    return caps_shown() || (s_fn && s_fn_highlight) || (tick < s_bat_until) ||
+    return caps_key_shown() || fn_overview() || (tick < s_bat_until) ||
            (s_ble && rrgb_ble_active(tick));
 }
 
@@ -171,25 +178,30 @@ static void set_pos(struct rrgb *px, uint16_t n, uint8_t pos, struct rrgb c) {
     if (led >= 0 && led < (int)n) { px[led] = c; }
 }
 
-void rrgb_overlay_render(struct rrgb *px, uint16_t n, uint32_t tick) {
+void rrgb_overlay_render(struct rrgb *px, uint16_t n, uint32_t tick, uint8_t tint_v) {
+    bool overview = fn_overview();
+    uint8_t style = s_caps_style;
+
     /* 1. Fn-highlight (ind.fn_highlight): black out, light the keys whose
      *    layer-1 binding is not transparent (F1..F4 are repainted by the BLE
      *    status in step 4). */
-    if (s_fn && s_fn_highlight) {
+    if (overview) {
         for (uint16_t i = 0; i < n; i++) { px[i] = (struct rrgb){0, 0, 0}; }
         for (uint16_t p = 0; p < RRGB_FN_MASK_WORDS * 32; p++) {
             if (fn_key(p)) { set_pos(px, n, (uint8_t)p, (struct rrgb){255, 255, 255}); }
         }
     }
     /* 2. CapsLock (ind.caps_style, ind.caps_color): the key in the colour,
-     *    or every LED mixed 50/50 with it. */
-    if (caps_shown()) {
+     *    or every LED mixed 50/50 with the colour scaled by tint_v (the
+     *    effect's brightness); no tint over the Fn overview or without the
+     *    effect (tint_v 0). */
+    if (s_caps && style == RRGB_CAPS_KEY) {
+        set_pos(px, n, CAPS_POS, rgb_of(s_caps_rgb));
+    } else if (s_caps && style == RRGB_CAPS_TINT && tint_v > 0 && !overview) {
         struct rrgb c = rgb_of(s_caps_rgb);
-        if (s_caps_style == RRGB_CAPS_KEY) {
-            set_pos(px, n, CAPS_POS, c);
-        } else {
-            for (uint16_t i = 0; i < n; i++) { px[i] = mix50(px[i], c); }
-        }
+
+        c = (struct rrgb){scale8(c.r, tint_v), scale8(c.g, tint_v), scale8(c.b, tint_v)};
+        for (uint16_t i = 0; i < n; i++) { px[i] = mix50(px[i], c); }
     }
     /* 3. Battery gauge: 10-segment bar on the number row, ~3s window. */
     if (tick < s_bat_until) {

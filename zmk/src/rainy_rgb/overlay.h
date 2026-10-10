@@ -21,7 +21,8 @@ void rrgb_overlay_battery_show(uint32_t tick);   /* start the ~3s gauge window *
 enum rrgb_caps_style { RRGB_CAPS_KEY = 0, RRGB_CAPS_TINT = 1, RRGB_CAPS_OFF = 2 };
 /* ind.caps_style + ind.caps_color 0xRRGGBB (default KEY, white): with
  * CapsLock on, KEY lights the CapsLock key in the colour, TINT mixes every
- * LED 50/50 with it, OFF shows nothing. */
+ * LED 50/50 with the colour at the effect's brightness (tint_v of
+ * rrgb_overlay_render; not over the Fn overview), OFF shows nothing. */
 void rrgb_overlay_set_caps_style(uint8_t style, uint32_t rgb);
 /* ind.fn_highlight (default on). Off: holding Fn changes no key here (the
  * BLE status still paints F1..F4). */
@@ -55,13 +56,18 @@ void rrgb_overlay_bat_low_render(struct rrgb *px, uint16_t n, uint32_t tick, boo
 
 /* Applied AFTER the effect, BEFORE strip_show. Order: Fn-highlight,
  * CapsLock, battery gauge, BLE status (last, so it owns F1..F4 and wins
- * the number row while the passkey is typed). */
-void rrgb_overlay_render(struct rrgb *px, uint16_t n, uint32_t tick);
+ * the number row while the passkey is typed). tint_v: the brightness
+ * 0..255 the effect layer was drawn at this frame (its rendered value
+ * times the effect gain), 0 when it was not drawn (RGB off, idle off,
+ * faded out for BLE, host pixel mode); the CapsLock tint colour is scaled
+ * by it, so 0 shows no tint. */
+void rrgb_overlay_render(struct rrgb *px, uint16_t n, uint32_t tick, uint8_t tint_v);
 
-/* True if any functional overlay needs to show this frame (caps on with a
- * visible style, Fn held with the highlight on, battery gauge window open,
- * or a BLE status indication), so the engine renders indicators even when
- * the decorative RGB is toggled off or idle. */
+/* True if any functional overlay needs to show this frame (caps on with the
+ * key style, Fn held with the highlight on, battery gauge window open, or a
+ * BLE status indication), so the engine renders indicators even when the
+ * decorative RGB is toggled off or idle. The CapsLock tint shows only on
+ * top of a drawn effect and does not count. */
 bool rrgb_overlay_active(uint32_t tick);
 
 /* True while ble_status shows an automatic BLE animation (connecting,

@@ -52,7 +52,7 @@ static void test_ble(void) {
     /* idle: nothing to draw, nothing touched */
     CHECK(!rrgb_overlay_active(t));
     for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){7, 7, 7}; }
-    rrgb_overlay_render(px, 83, t);
+    rrgb_overlay_render(px, 83, t, 255);
     for (int i = 0; i < 83; i++) { CHECK(eq(px[i], (struct rrgb){7, 7, 7})); }
 
     /* Fn held, all slots EMPTY, output USB: ble owns F1..F4, the rest of the
@@ -60,7 +60,7 @@ static void test_ble(void) {
     rrgb_overlay_set_fn(true);
     CHECK(rrgb_overlay_active(t));
     for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){50, 50, 50}; }
-    rrgb_overlay_render(px, 83, t);
+    rrgb_overlay_render(px, 83, t, 255);
     for (int s = 0; s < 3; s++) { CHECK(eq(at(px, POS_F(s)), white(RRGB_BLE_VDIM))); }
     CHECK(eq(at(px, POS_F4), white(RRGB_BLE_OUT)));
     CHECK(eq(at(px, 0), white(255)));            /* ESC: Fn white */
@@ -73,7 +73,7 @@ static void test_ble(void) {
     rrgb_ble_set_output_ble(true);
     rrgb_ble_set_slots(mixed, 0, t);
     t += RRGB_BLE_CONN_SOLID + RRGB_BLE_CONN_FADE;   /* connected solid+fade over */
-    rrgb_overlay_render(px, 83, t);
+    rrgb_overlay_render(px, 83, t, 255);
     CHECK(eq(at(px, POS_F(0)), blue(RRGB_BLE_BRIGHT)));
     CHECK(eq(at(px, POS_F(1)), blue(RRGB_BLE_VDIM)));
     CHECK(eq(at(px, POS_F(2)), white(RRGB_BLE_VDIM)));
@@ -85,14 +85,14 @@ static void test_ble(void) {
     rrgb_overlay_set_fn(false);
     CHECK(!rrgb_overlay_active(t));
     for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){7, 7, 7}; }
-    rrgb_overlay_render(px, 83, t);
+    rrgb_overlay_render(px, 83, t, 255);
     CHECK(eq(at(px, POS_F(0)), (struct rrgb){7, 7, 7}));
 
     /* CapsLock and a ble animation at the same time: both show */
     rrgb_overlay_set_caps(true);
     rrgb_ble_event(RRGB_BLE_EV_FAILED, 1, 0, t);
     CHECK(rrgb_overlay_active(t));
-    rrgb_overlay_render(px, 83, t);
+    rrgb_overlay_render(px, 83, t, 255);
     CHECK(eq(at(px, 44), white(255)));                          /* CapsLock */
     CHECK(eq(at(px, POS_F(1)), (struct rrgb){RRGB_BLE_BRIGHT, 0, 0}));   /* red flash on */
     rrgb_overlay_set_caps(false);
@@ -104,7 +104,7 @@ static void test_ble(void) {
     rrgb_ble_event(RRGB_BLE_EV_PASSKEY_REQ, 2, 0, t);
     rrgb_ble_event(RRGB_BLE_EV_PASSKEY_DIGITS, 2, 2, t);
     for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){7, 7, 7}; }
-    rrgb_overlay_render(px, 83, t);
+    rrgb_overlay_render(px, 83, t, 255);
     CHECK(eq(at(px, POS_NUM(0)), blue(RRGB_BLE_BRIGHT)));
     CHECK(eq(at(px, POS_NUM(1)), blue(RRGB_BLE_BRIGHT)));
     for (int k = 2; k < 10; k++) { CHECK(eq(at(px, POS_NUM(k)), white(RRGB_BLE_DIM))); }
@@ -114,7 +114,7 @@ static void test_ble(void) {
 
     /* guidance over: the gauge shows again in its window */
     rrgb_ble_event(RRGB_BLE_EV_PAIRED_OK, 2, 0, t + 1);
-    rrgb_overlay_render(px, 83, t + 1);
+    rrgb_overlay_render(px, 83, t + 1, 255);
     CHECK(at(px, POS_NUM(9)).g > 30);                           /* 100 % green */
 
     /* RGB off with only a ble animation: overlay_active keeps the loop alive */
@@ -123,7 +123,7 @@ static void test_ble(void) {
     rrgb_ble_set_slots(all_empty, 0, t);                        /* active slot 0 cleared */
     CHECK(rrgb_overlay_active(t));                              /* blinking */
     for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){0, 0, 0}; }
-    rrgb_overlay_render(px, 83, t);
+    rrgb_overlay_render(px, 83, t, 255);
     CHECK(eq(at(px, POS_F(0)), blue(RRGB_BLE_BRIGHT)));
     rrgb_ble_set_output_ble(false);
     CHECK(!rrgb_overlay_active(t));                             /* USB: steady gated */
@@ -131,7 +131,7 @@ static void test_ble(void) {
     /* explicit profile switch: confirm flash on the new slot, also on USB */
     rrgb_ble_set_slots(all_empty, 2, t);
     CHECK(rrgb_overlay_active(t));
-    rrgb_overlay_render(px, 83, t);
+    rrgb_overlay_render(px, 83, t, 255);
     CHECK(eq(at(px, POS_F(2)), blue(RRGB_BLE_BRIGHT)));
     CHECK(!rrgb_overlay_active(t + RRGB_BLE_SELECT_TOTAL));    /* then gated (USB) */
 
@@ -148,7 +148,7 @@ static void test_ble(void) {
     rrgb_overlay_set_fn(true);
     rrgb_ble_event(RRGB_BLE_EV_PASSKEY_REQ, 0, 0, t);
     for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){50, 50, 50}; }
-    rrgb_overlay_render(px, 83, t);
+    rrgb_overlay_render(px, 83, t, 255);
     for (int s = 0; s < 3; s++) { CHECK(eq(at(px, POS_F(s)), white(255))); }
     CHECK(eq(at(px, POS_F4), white(255)));
     CHECK(eq(at(px, POS_NUM(0)), white(0)));
@@ -255,11 +255,11 @@ static void test_fn_highlight_setting(void) {
     rrgb_overlay_set_fn_highlight(false);
     CHECK(!rrgb_overlay_active(1000));
     for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){50, 50, 50}; }
-    rrgb_overlay_render(px, 83, 1000);
+    rrgb_overlay_render(px, 83, 1000, 255);
     for (int i = 0; i < 83; i++) { CHECK(eq(px[i], (struct rrgb){50, 50, 50})); }
     rrgb_overlay_set_fn_highlight(true);
     CHECK(rrgb_overlay_active(1000));
-    rrgb_overlay_render(px, 83, 1000);
+    rrgb_overlay_render(px, 83, 1000, 255);
     CHECK(eq(at(px, 0), white(255)) && eq(at(px, 31), white(0)));
     rrgb_overlay_set_fn(false);
 }
@@ -274,7 +274,7 @@ static void test_fn_keys_live(void) {
     rrgb_overlay_set_fn_keys(m);
     rrgb_overlay_set_fn(true);
     for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){50, 50, 50}; }
-    rrgb_overlay_render(px, 83, 1000);
+    rrgb_overlay_render(px, 83, 1000, 255);
     CHECK(eq(at(px, 31), white(255)));
     CHECK(eq(at(px, 0), white(0)));              /* Esc dark now */
     rrgb_overlay_set_fn(false);
@@ -291,19 +291,67 @@ static void test_caps_styles(void) {
     rrgb_overlay_set_caps(true);
     rrgb_overlay_set_caps_style(RRGB_CAPS_KEY, 0xFF0000);
     for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){100, 100, 100}; }
-    rrgb_overlay_render(px, 83, 1000);
+    rrgb_overlay_render(px, 83, 1000, 255);
     CHECK(eq(at(px, 44), (struct rrgb){255, 0, 0}));
     CHECK(eq(at(px, 31), (struct rrgb){100, 100, 100}));
-    rrgb_overlay_set_caps_style(RRGB_CAPS_TINT, 0x0000FF);
-    for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){100, 100, 100}; }
-    rrgb_overlay_render(px, 83, 1000);
-    for (int i = 0; i < 83; i++) { CHECK(eq(px[i], (struct rrgb){50, 50, 177})); }
     CHECK(rrgb_overlay_active(1000));
     rrgb_overlay_set_caps_style(RRGB_CAPS_OFF, 0x0000FF);
     CHECK(!rrgb_overlay_active(1000));
     for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){100, 100, 100}; }
-    rrgb_overlay_render(px, 83, 1000);
+    rrgb_overlay_render(px, 83, 1000, 255);
     for (int i = 0; i < 83; i++) { CHECK(eq(px[i], (struct rrgb){100, 100, 100})); }
+    rrgb_overlay_set_caps_style(RRGB_CAPS_KEY, 0xFFFFFF);   /* the defaults again */
+    rrgb_overlay_set_caps(false);
+}
+
+static void fill(struct rrgb *px, uint8_t v) {
+    for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){v, v, v}; }
+}
+
+static int all_eq(const struct rrgb *px, struct rrgb c) {
+    for (int i = 0; i < 83; i++) {
+        if (!eq(px[i], c)) { return 0; }
+    }
+    return 1;
+}
+
+/* ind.caps_style tint: every LED mixed 50/50 with the colour scaled to the
+ * brightness the effect was drawn at (tint_v); nothing over the Fn overview
+ * or without the effect, so the tint alone keeps nothing active. */
+static void test_caps_tint(void) {
+    struct rrgb px[83];
+
+    rrgb_overlay_init(false);
+    rrgb_overlay_set_fn(false);
+    rrgb_overlay_battery_show(0);
+    rrgb_overlay_set_caps(true);
+    rrgb_overlay_set_caps_style(RRGB_CAPS_TINT, 0x0000FF);
+    /* v 255, gain 255: the plain 50/50 mix */
+    fill(px, 100);
+    rrgb_overlay_render(px, 83, 1000, 255);
+    CHECK(all_eq(px, (struct rrgb){50, 50, 177}));
+    /* v 0 (effect not drawn): untouched */
+    fill(px, 100);
+    rrgb_overlay_render(px, 83, 1000, 0);
+    CHECK(all_eq(px, (struct rrgb){100, 100, 100}));
+    /* half brightness: half the colour (255 * 128 / 255 = 128) */
+    fill(px, 100);
+    rrgb_overlay_render(px, 83, 1000, 128);
+    CHECK(all_eq(px, (struct rrgb){50, 50, (100 + 128) / 2}));
+    /* Fn overview: no tint over it */
+    rrgb_overlay_set_fn(true);
+    fill(px, 50);
+    rrgb_overlay_render(px, 83, 1000, 255);
+    CHECK(eq(at(px, 0), white(255)) && eq(at(px, 31), white(0)));
+    /* Fn held with the highlight off: no overview, the tint shows */
+    rrgb_overlay_set_fn_highlight(false);
+    fill(px, 100);
+    rrgb_overlay_render(px, 83, 1000, 255);
+    CHECK(all_eq(px, (struct rrgb){50, 50, 177}));
+    rrgb_overlay_set_fn_highlight(true);
+    rrgb_overlay_set_fn(false);
+    /* it needs the effect: no frame loop or LED rail for the tint alone */
+    CHECK(!rrgb_overlay_active(1000));
     rrgb_overlay_set_caps_style(RRGB_CAPS_KEY, 0xFFFFFF);   /* the defaults again */
     rrgb_overlay_set_caps(false);
 }
@@ -362,13 +410,13 @@ int main(void) {
 
     /* nothing active -> render leaves pixels untouched */
     memset(px, 7, sizeof(px));
-    rrgb_overlay_render(px, 83, 100);
+    rrgb_overlay_render(px, 83, 100, 255);
     CHECK(px[0].r == 7 && px[10].g == 7);           /* untouched */
 
     /* CapsLock on -> CapsLock LED (pos 44) is white, others untouched */
     memset(px, 0, sizeof(px));
     rrgb_overlay_set_caps(true);
-    rrgb_overlay_render(px, 83, 100);
+    rrgb_overlay_render(px, 83, 100, 255);
     int caps_led = rrgb_led_for_position(44);
     CHECK(caps_led >= 0);
     CHECK(px[caps_led].r == 255 && px[caps_led].g == 255 && px[caps_led].b == 255);
@@ -377,7 +425,7 @@ int main(void) {
     /* Fn active -> only Fn keys lit white, rest black */
     for (int i = 0; i < 83; i++) { px[i] = (struct rrgb){50,50,50}; }
     rrgb_overlay_set_fn(true);
-    rrgb_overlay_render(px, 83, 100);
+    rrgb_overlay_render(px, 83, 100, 255);
     int led_esc = rrgb_led_for_position(0);    /* ESC: Fn-active */
     int led_q   = rrgb_led_for_position(31);   /* Q: NOT Fn-active */
     CHECK(px[led_esc].r == 255);               /* Fn key lit */
@@ -388,7 +436,7 @@ int main(void) {
     memset(px, 0, sizeof(px));
     rrgb_overlay_set_battery(50);
     rrgb_overlay_battery_show(0);              /* window until tick 90 */
-    rrgb_overlay_render(px, 83, 10);           /* tick 10 < 90 -> active */
+    rrgb_overlay_render(px, 83, 10, 255);           /* tick 10 < 90 -> active */
     int seg0 = rrgb_led_for_position(16);      /* first segment (lit) */
     int seg9 = rrgb_led_for_position(25);      /* last segment (unlit, dim) */
     CHECK((px[seg0].r|px[seg0].g|px[seg0].b) > 30);   /* lit */
@@ -396,7 +444,7 @@ int main(void) {
 
     /* gauge window expires */
     memset(px, 0, sizeof(px));
-    rrgb_overlay_render(px, 83, 100);          /* tick 100 >= 90 -> no gauge */
+    rrgb_overlay_render(px, 83, 100, 255);          /* tick 100 >= 90 -> no gauge */
     CHECK((px[seg0].r|px[seg0].g|px[seg0].b) == 0);
 
     /* rrgb_overlay_active: true while caps/fn/battery-window, else false
@@ -421,6 +469,7 @@ int main(void) {
     test_fn_highlight_setting();
     test_fn_keys_live();
     test_caps_styles();
+    test_caps_tint();
     test_bat_low_alpha();
     test_bat_low_render();
     DONE();

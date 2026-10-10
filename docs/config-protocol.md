@@ -122,9 +122,14 @@ read).
 - `rgb.idle_s` / `rgb.idle_mode`: after `rgb.idle_s` seconds without a key event, the
   effect turns off (`off`) or renders at a quarter of its brightness (`dim`); the next key
   brings it back. The indicators (CapsLock, Fn highlight, battery gauge, Bluetooth status,
-  passkey guide) keep showing; host pixel mode is not affected.
+  passkey guide) keep showing, the CapsLock `tint` only with `dim`; host pixel mode is not
+  affected.
 - `ind.caps_style` / `ind.caps_color`: with CapsLock on, `key` lights the CapsLock key in
-  the colour, `tint` mixes every LED 50/50 with it, `off` shows nothing.
+  the colour at full strength, `tint` mixes every LED 50/50 with the colour scaled to the
+  brightness the effect is drawn at (after `rgb.val_battery`, idle `dim` and the fade during
+  a Bluetooth animation), `off` shows nothing. The tint does not show while the Fn highlight
+  does (Fn held, `ind.fn_highlight` on) or while the effect is not drawn (RGB off, idle
+  `off`, a Bluetooth animation, host pixel mode).
 - `ind.fn_highlight`: while the Fn layer is held, keys whose Fn-layer binding is not
   transparent light white and the rest go dark; off leaves the lighting as it is (F1..F4
   still show the Bluetooth slots). The keys come from the live keymap, so they follow ZMK
