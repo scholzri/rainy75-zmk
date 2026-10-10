@@ -74,7 +74,10 @@ rainy75/                            # workspace root
 │   ├── lib/
 │   │   └── liblt_9518_zephyr.a     # BLE controller blob (2.8 MB, fetched for --blob, gitignored)
 │   ├── src/
-│   │   └── mcuboot_confirm.c       # MCUboot image confirmation + WDT safety net
+│   │   ├── config/                 # runtime settings: registry, stored-form codec, table, rainy_cfg storage, mcumgr group 67
+│   │   ├── mcuboot_confirm.c       # MCUboot image confirmation + WDT safety net
+│   │   ├── os_key/                 # OS key decisions: Win/Mac swap, GUI lock, bound-key count (pure)
+│   │   └── rainy_rgb/              # rainy_rgb lighting engine: effects, overlay, state, ZMK adapter (host tests in tests/)
 │   ├── boards/rainy75/             # HWMv2 board definition
 │   │   ├── board.yml
 │   │   ├── Kconfig.rainy75
@@ -126,6 +129,8 @@ rainy75/                            # workspace root
 │   ├── mcuboot.conf                # MCUboot bootloader config
 │   ├── mcuboot.overlay             # MCUboot DTS overlay (disables peripherals, adds CDC ACM)
 │   └── mcumgr.overlay              # App DTS overlay (CDC ACM for mcumgr SMP transport)
+├── web/
+│   └── config/                     # config page: one HTML file, no build step, and its tests (config.md)
 ├── zmk-src/                        # ZMK upstream (fetched by west)
 │   └── app/                        # ZMK application
 ├── zephyr/                         # Zephyr upstream (fetched by west)
@@ -799,7 +804,7 @@ On layer 0 of both layouts, left GUI and left Alt are `&os_key LGUI` and `&os_ke
 
 `&os_key LGUI` / `&os_key LALT` (`zmk/src/behaviors/behavior_os_key.c`, binding `rainy,behavior-os-key`, node `os_key` with display name "OS Key" in `zmk/dts/rainy75_os_key.dtsi`, built with `CONFIG_RAINY75_OS_KEY`, which is on whenever the keymap includes that node) sends GUI or Alt as the runtime settings `kb.os` and `kb.gui_lock` say ([config-protocol.md](config-protocol.md)): with `mac` the two swap (Option and Command in the Mac order), then with the GUI lock a key that would send GUI sends nothing. The decisions are pure and host tested (`zmk/src/os_key/`, `tests/run_host_tests.sh`); the behavior raises the keycode they return with `raise_zmk_keycode_state_changed_from_encoded()`, as `&kp` does. The key sent on press is kept per key position (4 slots, 32 B) and released on release, so changing a setting while a key is held leaves nothing stuck. `config/cfg_table.c` pushes the settings with `os_key_set_mode()`; without `CONFIG_RAINY75_CONFIG` (OTA bridge) the keys are plain GUI and Alt. Studio metadata: one parameter with the values LGUI ("Win (Option on a Mac)") and LALT ("Alt (Command on a Mac)"); other parameters are refused with `-ENOTSUP`.
 
-`kb.os_keys` (read-only) counts the key positions bound to `&os_key` on any layer in use, from ZMK's live keymap (`zmk_keymap_layer_index_to_id()`, `zmk_keymap_get_layer_binding_at_idx()`), on every read from the mcumgr thread, so it costs no RAM and follows unsaved Studio edits. It follows every keymap edit (a Studio set, save or discard, Restore Stock Settings) without a `rev` change, the one exception to "`rev` changes on every change" ([config-protocol.md](config-protocol.md)), so clients read `kb.os_keys` explicitly (on connect, when they show the Keyboard section or the warning, or periodically). Studio stores only the positions a user changed (`keymap/l/<layer>/<position>`), so a keymap saved before this behavior existed still gets `&os_key` on the two keys unless they were rebound; the count shows when they were.
+`kb.os_keys` (read-only) counts the key positions bound to `&os_key` on any layer in use, from ZMK's live keymap (`zmk_keymap_layer_index_to_id()`, `zmk_keymap_get_layer_binding_at_idx()`), on every read from the mcumgr thread, so it costs no RAM and follows unsaved Studio edits. It follows a Studio binding change or discard, a layer removed or restored, and Restore Stock Settings (not a save, which does not change the live keymap) without a `rev` change, the one exception to "`rev` changes on every change" ([config-protocol.md](config-protocol.md)), so clients read `kb.os_keys` explicitly (on connect, when they show the Keyboard section or the warning, or periodically). Studio stores only the positions a user changed (`keymap/l/<layer>/<position>`), so a keymap saved before this behavior existed still gets `&os_key` on the two keys unless they were rebound; the count shows when they were.
 
 ### Defconfig
 

@@ -34,7 +34,8 @@ behavior (`zmk/src/behaviors/behavior_os_key.c`, decisions in `zmk/src/os_key/`)
   is not persistent: it restarts at 0 on every boot (loading `rgb.boot_effect` can already
   count as one change), so clients compare it for inequality only and re-read everything
   after any (re)connect. The one exception is `kb.os_keys`: it follows keymap edits
-  (a ZMK Studio set, save or discard, Restore Stock Settings) without a `rev` change, so a
+  (a ZMK Studio binding change or discard, a layer removed or restored, Restore Stock
+  Settings; not a save, which does not change the live keymap) without a `rev` change, so a
   client reads it explicitly (on connect, when it shows the Keyboard section or its warning,
   or periodically) and never waits for `rev` to announce it.
 - `list` / `get` page: a reply holds as many entries as fit one mcumgr buffer (512 bytes),
@@ -88,8 +89,11 @@ reading any other field.
 mcumgr `rc`: 3 `EINVAL` (wrong type, out of range, unknown name, list too long, bad
 request), 5 `ENOENT` (unknown key), 7 `EMSGSIZE` (reply too large), 8 `ENOTSUP` (no such
 group, command or op, see below), 11 `EACCESSDENIED` (read-only; `set` returns it before the
-value is checked). A valid value that needs normalization is normalized and echoed (for
-example a list without its duplicates).
+value is checked). A `set` whose value the request decoder refuses (for example null, a
+negative number or a list of more than 16 texts) gives 3 first, before the key is looked up,
+so before 5 or 11; any other value is checked after the key (5) and the read-only flag (11).
+A valid value that needs normalization is normalized and echoed (for example a list without
+its duplicates).
 
 `ENOTSUP` is how a client detects old firmware: a build without group 67 (the fallback
 image, v0.3.x) answers every request of this group with rc 8. The same rc comes from a

@@ -33,8 +33,17 @@ Build and test:
 ```bash
 ./build.sh -a --iso                             # MCUboot + app + combined + OTA + bridge (--ansi for ANSI)
 ./build.sh -p --iso                             # pristine app rebuild
-./zmk/src/rainy_rgb/tests/run_host_tests.sh     # host unit tests (color/effects/overlay)
+./zmk/src/rainy_rgb/tests/run_host_tests.sh     # host unit tests: lighting engine (color/effects/overlay/lighting/ble_status)
+./zmk/src/config/tests/run_host_tests.sh        # host unit tests: runtime settings (registry, codec, table)
+./zmk/src/os_key/tests/run_host_tests.sh        # host unit tests: OS key behavior (Win/Mac swap, GUI lock)
+./zmk/src/ble_open_profile/tests/run_host_tests.sh   # host unit tests: open profile timeout
+./zmk/drivers/bluetooth/openll/tests/run_host_tests.sh   # host unit tests: open BLE link layer
+(cd reverse/tools && python3 -m unittest test_rainy75_cfg test_rainy75_dfu test_rainy75_rgb test_openll_stats test_ble_adv_report)
+node web/config/test-node.mjs                   # config page, all but the UI (Node 18 or later)
 ```
+
+The config page's UI tests run in a browser: `cd web && python3 -m http.server 8765`, then
+open `http://localhost:8765/config/test.html` in Chrome (the title shows PASS or FAIL).
 
 ## How the code is organized
 
@@ -64,7 +73,10 @@ Keep this boundary: prefer a new file under `zmk/` over editing fetched sources 
 
 ## Testing & verification
 
-- **Host tests must pass:** `run_host_tests.sh` for anything touching the engine.
+- **Host tests must pass:** the `run_host_tests.sh` of the part you touch (lighting engine,
+  runtime settings, OS key, open BLE controller), the Python tests for anything under
+  `reverse/tools/`, and `node web/config/test-node.mjs` plus `web/config/test.html` for the
+  config page.
 - **Builds must be clean:** `./build.sh -a --iso` (and `--ansi` if you touched the layout).
 - **Hardware-affecting changes** (drivers, pins, timing, power, BLE) should be verified on
   a real board, and the PR should say how (what you observed: USB enumerates, BLE pairs,
