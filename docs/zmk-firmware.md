@@ -792,6 +792,13 @@ The Telink reference board (`tlsr9518adk80d`) uses 64K boot + 448K slots + 16K s
 
 - **Layer 0** — default: ESC, F1-F12, full alphanumeric, ISO hash, NUBS (`<>` key)
 - **Layer 1** — Fn: Studio unlock (ESC), BT profile select (F1-F3), output toggle (F4), media keys (F5-F12), RGB controls
+- Left GUI and left Alt are `&os_key LGUI` and `&os_key LALT` in both layouts (positions 74 and 75; see OS key behavior below). Right Alt stays `&kp RALT`.
+
+### OS key behavior
+
+`&os_key LGUI` / `&os_key LALT` (`zmk/src/behaviors/behavior_os_key.c`, binding `rainy,behavior-os-key`, node `os_key` with display name "OS Key" in `zmk/dts/rainy75_os_key.dtsi`, built with `CONFIG_RAINY75_OS_KEY`, which is on whenever the keymap includes that node) sends GUI or Alt as the runtime settings `kb.os` and `kb.gui_lock` say ([config-protocol.md](config-protocol.md)): with `mac` the two swap (Option and Command in the Mac order), then with the GUI lock a key that would send GUI sends nothing. The decisions are pure and host tested (`zmk/src/os_key/`, `tests/run_host_tests.sh`); the behavior raises the keycode they return with `raise_zmk_keycode_state_changed_from_encoded()`, as `&kp` does. The key sent on press is kept per key position (4 slots, 32 B) and released on release, so changing a setting while a key is held leaves nothing stuck. `config/cfg_table.c` pushes the settings with `os_key_set_mode()`; without `CONFIG_RAINY75_CONFIG` (OTA bridge) the keys are plain GUI and Alt. Studio metadata: one parameter with the values LGUI ("Win (Option on a Mac)") and LALT ("Alt (Command on a Mac)"); other parameters are refused with `-ENOTSUP`.
+
+`kb.os_keys` (read-only) counts the key positions bound to `&os_key` on any layer in use, from ZMK's live keymap (`zmk_keymap_layer_index_to_id()`, `zmk_keymap_get_layer_binding_at_idx()`), on every read from the mcumgr thread, so it costs no RAM and follows unsaved Studio edits. Studio stores only the positions a user changed (`keymap/l/<layer>/<position>`), so a keymap saved before this behavior existed still gets `&os_key` on the two keys unless they were rebound; the count shows when they were.
 
 ### Defconfig
 
