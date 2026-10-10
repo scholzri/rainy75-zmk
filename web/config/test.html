@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-src 'self'">
+<title>Config page tests</title>
+<style>
+body { margin: 1rem; font: 14px/1.4 ui-monospace, monospace; }
+#frames iframe { width: 900px; height: 600px; border: 1px solid #888; }
+</style>
+</head>
+<body>
+<h1>Config page tests</h1>
+<p>Runs the data-core sections of index.html and the UI tests on index.html?demo.
+Serve web/ over http (cd web and python3 -m http.server 8765), then open
+http://localhost:8765/config/test.html. The title shows PASS or FAIL.</p>
+<pre id="out">running</pre>
+<div id="frames"></div>
+<script src="tests.js"></script>
+<script>
+"use strict";
+(async () => {
+  const out = document.getElementById("out");
+  try {
+    const html = await (await fetch("index.html", { cache: "no-store" })).text();
+    for (const m of html.matchAll(/<script data-core id="([\w-]+)">([\s\S]*?)<\/script>/g)) {
+      const s = document.createElement("script");
+      s.textContent = m[2];
+      document.head.append(s);
+    }
+    const env = {
+      html,
+      bytes: new TextEncoder().encode(html).length,
+      browser: true,
+      frames: document.getElementById("frames"),
+    };
+    const r = await RainyTestRun(RainyCore, env);
+    const summary = `${r.passed} passed, ${r.failed} failed, ${r.skipped} skipped`;
+    out.textContent = r.lines.join("\n") + "\n" + summary;
+    document.title = (r.failed ? "FAIL " : "PASS ") + summary;
+  } catch (e) {
+    out.textContent = "error: " + e.message;
+    document.title = "FAIL error";
+  }
+})();
+</script>
+</body>
+</html>

@@ -79,6 +79,9 @@ read on their own.
   WS2812 LEDs: 11 animated effects, reactive ripple/heatmap, an opt-in walker diagnostic, FPS-independent speed, and
   *functional* indicators (CapsLock, Fn-layer highlight, battery gauge) — see
   [docs/rainy-rgb.md](docs/rainy-rgb.md).
+- **Settings without reflashing**: lighting, indicators and the Win or Mac key layout from a
+  [web page](https://scholzri.github.io/rainy75-zmk/config/) or the command line, over USB or
+  Bluetooth ([docs/config.md](docs/config.md)).
 - **No debugger needed to install** — once you've built the images, a two-stage OTA →
   mcumgr DFU path flashes ZMK over the stock firmware's own update protocol with
   `./install_zmk.sh` (no opening the case, no hardware programmer).
@@ -126,6 +129,7 @@ read on their own.
 | **Install this ZMK firmware** | `./install_zmk.sh` — two-stage OTA → mcumgr, no debugger. Full guide: [INSTALL.md](INSTALL.md). |
 | **Use it — controls, Bluetooth, Studio** | [docs/usage.md](docs/usage.md) — Fn-layer, BT profiles + reset, live keymap editing via ZMK Studio. |
 | **Go back to stock** | `./restore_stock.sh` — see [INSTALL.md](INSTALL.md#3-go-back-to-stock). |
+| **Change lighting and keyboard settings** | The [config page](https://scholzri.github.io/rainy75-zmk/config/) (Chrome or Edge, over USB or Bluetooth) or `rainy75_cfg.py`: [docs/config.md](docs/config.md). |
 | **Build from source** | `./build.sh -a --iso` (or `--ansi`; Zephyr SDK 0.17.0 + west). See [INSTALL.md](INSTALL.md#4-build-from-source). |
 | **Recover a bricked board** | Telink burning board over the SWS pads — [docs/recovery.md](docs/recovery.md). |
 | **Open the case / service the battery** | Photo teardown walkthrough — [docs/teardown.md](docs/teardown.md). |
@@ -197,10 +201,13 @@ zmk/                  # Our Zephyr module: board def, out-of-tree drivers, rainy
   boards/rainy75/     # Board definition (DTS, keymap, defconfig)
   drivers/            # BLE / USB / LED-strip / battery / watchdog drivers
   src/rainy_rgb/      # Custom RGB lighting engine
+  src/config/         # Runtime settings (mcumgr group 67), see docs/config-protocol.md
+  src/os_key/         # OS key behavior decisions (Win/Mac swap, GUI lock)
   lib/                # Telink BLE blob, only for --blob builds: fetched by fetch_ble_blob.sh, not committed
 conf/                 # Build configuration overlays (app / mcuboot / ota-bridge)
 patches/             # Small Zephyr patches (applied by west)
 docs/                 # Reverse-engineering writeups + firmware docs
+web/config/           # Config page (one HTML file, no build step) and its tests, see docs/config.md
 reverse/tools/        # USB/HID tools: OTA flasher, VIA probes, stock-firmware extractor, SWS helper
 fetch_ble_blob.sh     # Downloads the (non-redistributable) Telink BLE blob, only for ./build.sh --blob
 install_zmk.sh        # Stock → ZMK (OTA bridge + mcumgr)
@@ -220,10 +227,13 @@ Where this is heading: the pinned **[Road to 1.0](https://github.com/scholzri/ra
 issue has the plan and the points where help is most welcome, especially test reports from
 Windows, macOS and iOS.
 
-- **Build before submitting:** `./build.sh -a --iso` (and `--ansi`) and run the engine host
-  tests (`./zmk/src/rainy_rgb/tests/run_host_tests.sh`).
-- **Keep it out-of-tree:** new functionality lives under `zmk/`, so the ZMK pin can be
-  bumped without losing it.
+- **Build before submitting:** `./build.sh -a --iso` (and `--ansi`) and run the host tests
+  of what you touched: `zmk/src/rainy_rgb/tests/run_host_tests.sh`,
+  `zmk/src/config/tests/run_host_tests.sh`, `zmk/src/os_key/tests/run_host_tests.sh`, and
+  `node web/config/test-node.mjs` for the config page ([CONTRIBUTING.md](CONTRIBUTING.md)
+  lists all of them).
+- **Keep it out-of-tree:** new firmware functionality lives under `zmk/`, so the ZMK pin
+  can be bumped without losing it (the config page lives in `web/config/`).
 - **ANSI / other layouts:** ANSI is fully verified on hardware; other regional ISO
   layouts are mostly a keymap change — see
   [CONTRIBUTING.md](CONTRIBUTING.md#layout-variants-iso--ansi).

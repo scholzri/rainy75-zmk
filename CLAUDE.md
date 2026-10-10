@@ -26,6 +26,7 @@ All technical findings are in `docs/`:
 - [docs/open-ble-controller.md](docs/open-ble-controller.md): open BLE link layer (issue #13): architecture, build, status, sniffer workflow
 - [docs/rainy-rgb.md](docs/rainy-rgb.md): rainy_rgb out-of-tree lighting engine: 12 effects + opt-in walker diagnostic, XY calibration, functional indicators (CapsLock/Fn-highlight/battery/BLE slot status + passkey guidance), lighting settings (rgb.cycle, battery cap, idle off/dim, CapsLock style, live Fn highlight, low-battery pulse), controls, build/flash
 - [docs/config-protocol.md](docs/config-protocol.md): runtime settings over mcumgr group 67 (registry, storage `rainy_cfg`, commands, types, compatibility rules); CLI `reverse/tools/rainy75_cfg.py`
+- [docs/config.md](docs/config.md): for users: the config page `web/config/` (GitHub Pages, offline use, tests), the CLI, every setting
 - [docs/architecture.md](docs/architecture.md) — MCU, USB, HID interfaces, RGB, battery, connection modes
 - [docs/gpio-matrix.md](docs/gpio-matrix.md) — GPIO pins, matrix scan, timing, keymap, Fn combos
 - [docs/firmware-analysis.md](docs/firmware-analysis.md) — Ghidra, 211 functions, key pipeline, SRAM buffers, decompilation
@@ -93,6 +94,8 @@ modules/hal/hal_telink/          # Telink HAL (fetched by west, pinned in west.y
 bootloader/mcuboot/              # MCUboot v2.2.0 (fetched by west)
 install_zmk.sh                   # stock → ZMK one-command installer (OTA bridge + flash_mgmt)
 restore_stock.sh                 # ZMK → stock one-command restorer (flash_mgmt + reset)
+web/config/                      # config page: index.html (one file, CSP, under 100 KB; sections SMP+CBOR, USB, Bluetooth, model, demo, labels, UI), tests.js + test-node.mjs (Node) + test.html (browser, UI on ?demo)
+.github/workflows/pages.yml      # Node tests, then web/ to GitHub Pages on main; rainy75-config.html attached to every release
 build/zephyr/zmk.elf             # app build output (open controller: ~296 KB ROM, ~103 KB RAM; blob: ~320 KB ROM, ~83 KB RAM)
 build-mcuboot/zephyr/zephyr.elf  # MCUboot build output (~51 KB ROM, 64KB boot partition)
 build-bridge/zephyr/zmk.bin      # OTA bridge output (~83 KB, monolithic)

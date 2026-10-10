@@ -1,0 +1,2530 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Rainy 75 settings</title>
+<link rel="icon" href="data:,">
+<!--
+  The Rainy 75 config page: one self-contained file (no libraries, fonts or
+  network; the Content Security Policy above blocks every request). It talks
+  to the keyboard over mcumgr group 67 (docs/config-protocol.md), over USB
+  (Web Serial) or Bluetooth (Web Bluetooth). Sections, in this order: SMP +
+  CBOR, USB transport, Bluetooth transport, config model, simulated keyboard
+  (?demo), labels and help, UI. The script sections marked data-core touch no
+  browser API when they load, so test-node.mjs and test.html can run them.
+-->
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f5f6f8; --fg: #1a1c20; --muted: #555d6b; --card: #ffffff; --line: #d8dce2;
+  --accent: #1f56d1; --accent-fg: #ffffff; --focus: #1f56d1;
+  --info-bg: #e8effd; --info-fg: #173b8c; --warn-bg: #fff3d1; --warn-fg: #5f4300;
+  --err-bg: #fde7e7; --err-fg: #861b1b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a; --fg: #e6e8ec; --muted: #a3aab6; --card: #1d2026; --line: #343943;
+    --accent: #7ea4ff; --accent-fg: #0b1222; --focus: #9cbaff;
+    --info-bg: #182844; --info-fg: #c7d8ff; --warn-bg: #3a2e0e; --warn-fg: #ffd98c;
+    --err-bg: #3e1818; --err-fg: #ffb8b8;
+  }
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body {
+  margin: 0; color: var(--fg); background: var(--bg);
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+html { scroll-padding-top: 6rem; }
+a { color: var(--accent); }
+.skip { position: absolute; left: -100vw; }
+.skip:focus { left: 1rem; top: .5rem; z-index: 2; background: var(--card); padding: .3rem .6rem; }
+header.bar {
+  position: sticky; top: 0; z-index: 1; display: flex; flex-wrap: wrap; align-items: center;
+  gap: .5rem 1rem; padding: .7rem 1rem; background: var(--card); border-bottom: 1px solid var(--line);
+}
+header h1 { margin: 0 auto 0 0; font-size: 1.15rem; }
+.conn { display: flex; gap: .5rem; flex-wrap: wrap; }
+.status { flex-basis: 100%; margin: 0; color: var(--muted); font-size: .9rem; }
+#fw:not(:empty)::before { content: "\00B7\00A0"; }
+button {
+  font: inherit; padding: .4rem .9rem; border-radius: .4rem; cursor: pointer;
+  color: var(--fg); background: var(--card); border: 1px solid var(--line);
+}
+button.primary { color: var(--accent-fg); background: var(--accent); border-color: var(--accent); }
+button:disabled, button[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+button[aria-disabled="true"]:focus-visible { opacity: 1; }
+main { max-width: 52rem; margin: 0 auto; padding: 1rem; }
+main:focus { outline: none; }
+.msg { max-width: 50rem; margin: 1rem auto 0; padding: .6rem .9rem; border-radius: .4rem; }
+.msg.error { color: var(--err-fg); background: var(--err-bg); }
+.msg.info { color: var(--info-fg); background: var(--info-bg); }
+.card {
+  margin-bottom: 1rem; padding: .2rem 1rem 1rem; background: var(--card);
+  border: 1px solid var(--line); border-radius: .6rem;
+}
+h2 { margin: .8rem 0 .3rem; font-size: 1.05rem; }
+.row {
+  display: grid; grid-template-columns: minmax(10rem, 1fr) minmax(12rem, 1.4fr); gap: .3rem 1rem;
+  align-items: center; padding: .7rem 0; border-top: 1px solid var(--line);
+}
+.row:first-child { border-top: 0; }
+.row > p, .row > ol { grid-column: 1 / -1; margin: 0; }
+.help { color: var(--muted); font-size: .88rem; }
+.warn { padding: .4rem .6rem; color: var(--warn-fg); background: var(--warn-bg); border-radius: .3rem; }
+.control { display: flex; align-items: center; gap: .6rem; min-width: 0; }
+select { font: inherit; padding: .3rem; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: .3rem; }
+output { font-variant-numeric: tabular-nums; }
+input[role="switch"] {
+  appearance: none; position: relative; width: 2.75rem; height: 1.5rem; margin: 0; cursor: pointer;
+  background: var(--muted); border-radius: 1rem; transition: background .15s;
+}
+input[role="switch"]::before {
+  content: ""; position: absolute; top: .15rem; left: .15rem; width: 1.2rem; height: 1.2rem;
+  background: #fff; border-radius: 50%; transition: transform .15s;
+}
+input[role="switch"]:checked { background: var(--accent); }
+input[role="switch"]:checked::before { transform: translateX(1.25rem); }
+@media (forced-colors: active) { input[role="switch"] { appearance: auto; } }
+@media (max-width: 40rem) { .row { grid-template-columns: 1fr; } }
+/* the hidden attribute also hides what a class makes a flex box (.conn) */
+[hidden] { display: none !important; }
+input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+input[type="color"] {
+  width: 3rem; height: 2rem; padding: 0; cursor: pointer;
+  background: var(--card); border: 1px solid var(--line); border-radius: .3rem;
+}
+.control output { min-width: 6.5rem; }
+ol.cycle { display: grid; gap: .25rem; padding: 0; list-style: none; }
+ol.cycle li {
+  display: flex; align-items: center; gap: .5rem; padding: .3rem .5rem;
+  background: var(--bg); border: 1px solid var(--line); border-radius: .4rem;
+}
+ol.cycle .txt { flex: 1; }
+ol.cycle .grip { color: var(--muted); cursor: grab; }
+button.mv { padding: .1rem .5rem; }
+/* end of styles */
+</style>
+</head>
+<body>
+<noscript><p>This page needs JavaScript.</p></noscript>
+<a class="skip" href="#main">Skip to the settings</a>
+<header class="bar">
+  <h1>Rainy 75 settings</h1>
+  <div id="conn" class="conn" role="group" aria-label="Connection">
+    <button id="btn-usb" type="button" class="primary">Connect USB</button>
+    <button id="btn-ble" type="button">Connect Bluetooth</button>
+    <button id="btn-disconnect" type="button" hidden>Disconnect</button>
+  </div>
+  <p class="status"><span id="state" role="status">Starting</span> <span id="fw"></span></p>
+</header>
+<p id="msg" class="msg" role="alert" hidden></p>
+<main id="main" tabindex="-1">
+  <section id="unsupported" class="card" hidden>
+    <h2>This browser cannot connect to the keyboard</h2>
+    <p>The page talks to the keyboard through Web Serial (USB) and Web Bluetooth. Chrome and Edge
+    on Windows, macOS, Linux and ChromeOS have them; Firefox and Safari do not.</p>
+    <p>Without a keyboard: <a href="?demo">try the demo</a>.</p>
+  </section>
+  <section id="intro" class="card">
+    <h2>Connect the keyboard</h2>
+    <p><strong>USB:</strong> plug in the cable and click Connect USB. Chrome lists the keyboard
+    twice (two serial ports, on Linux with the udev rules "Rainy 75 Pro Console" and "Rainy 75 Pro
+    Studio"): choose the console port, or either, the page finds the right one.</p>
+    <p><strong>Bluetooth:</strong> the keyboard must be paired with this computer. Click Connect
+    Bluetooth and choose "Rainy 75 Pro".</p>
+    <p id="note-ble" class="warn" hidden>Bluetooth is not available in this browser. In Chrome on
+    Linux, turn on chrome://flags/#enable-web-bluetooth and restart Chrome.</p>
+    <p id="note-usb" class="warn" hidden>USB needs Chrome or Edge on a desktop computer.</p>
+    <p>Changes apply at once and are stored on the keyboard.
+    <a href="https://github.com/scholzri/rainy75-zmk/blob/main/docs/config.md">Settings guide</a>.
+    Without a keyboard: <a href="?demo">demo</a>.</p>
+  </section>
+  <div id="settings" hidden>
+    <section id="sec-rgb" class="card" aria-labelledby="h-rgb"><h2 id="h-rgb">Lighting</h2><div id="rows-rgb"></div></section>
+    <section id="sec-ind" class="card" aria-labelledby="h-ind"><h2 id="h-ind">Indicators</h2><div id="rows-ind"></div></section>
+    <section id="sec-kb" class="card" aria-labelledby="h-kb"><h2 id="h-kb">Keyboard</h2><div id="rows-kb"></div></section>
+    <p id="hidden-note" class="help" hidden></p>
+    <p class="conn"><button id="btn-reset" type="button">Reset to defaults</button></p>
+  </div>
+  <section id="demo" class="card" aria-labelledby="h-demo" hidden>
+    <h2 id="h-demo">Simulated keyboard</h2>
+    <p>The demo answers like a keyboard with the current firmware; nothing is sent anywhere.</p>
+    <p class="conn"><button id="demo-fn-enter" type="button">Press Fn+Enter</button>
+    <button id="demo-os-keys" type="button">Rebind the Win and Alt keys in ZMK Studio</button></p>
+    <p class="help">The page notices a ZMK Studio change within a few seconds, or at once when the
+    window gets the focus.</p>
+  </section>
+</main>
+<!-- end of page markup -->
+
+<!-- Section: SMP + CBOR -->
+<script data-core id="smp">
+"use strict";
+(() => {
+  const C = (globalThis.RainyCore = globalThis.RainyCore || {});
+
+  /* CBOR (RFC 8949), the subset SMP needs: unsigned and negative integers,
+   * byte and text strings, arrays, maps, false, true, null. Requests are
+   * always definite length; replies may use indefinite-length arrays and maps
+   * (zcbor writes them so), the decoder accepts both. */
+  const utf8 = new TextEncoder();
+  const utf8In = new TextDecoder("utf-8", { fatal: true });
+
+  function cborHead(out, major, n) {
+    if (!Number.isInteger(n) || n < 0 || n > 0xffffffff) {
+      throw new RangeError("CBOR: value out of range: " + n);
+    }
+    const m = major << 5;
+    if (n < 24) out.push(m | n);
+    else if (n < 0x100) out.push(m | 24, n);
+    else if (n < 0x10000) out.push(m | 25, n >> 8, n & 255);
+    else out.push(m | 26, n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255);
+  }
+
+  function cborItem(out, v, indef) {
+    if (v === false) out.push(0xf4);
+    else if (v === true) out.push(0xf5);
+    else if (v === null) out.push(0xf6);
+    else if (typeof v === "number") {
+      if (!Number.isInteger(v)) throw new TypeError("CBOR: not an integer: " + v);
+      if (v >= 0) cborHead(out, 0, v);
+      else cborHead(out, 1, -1 - v);
+    } else if (typeof v === "string") {
+      const b = utf8.encode(v);
+      cborHead(out, 3, b.length);
+      for (const x of b) out.push(x);
+    } else if (ArrayBuffer.isView(v)) {
+      const b = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+      cborHead(out, 2, b.length);
+      for (const x of b) out.push(x);
+    } else if (Array.isArray(v)) {
+      if (indef) out.push(0x9f);
+      else cborHead(out, 4, v.length);
+      for (const x of v) cborItem(out, x, indef);
+      if (indef) out.push(0xff);
+    } else if (typeof v === "object") {
+      const keys = Object.keys(v);
+      if (indef) out.push(0xbf);
+      else cborHead(out, 5, keys.length);
+      for (const k of keys) {
+        cborItem(out, k, indef);
+        cborItem(out, v[k], indef);
+      }
+      if (indef) out.push(0xff);
+    } else {
+      throw new TypeError("CBOR: cannot encode " + typeof v);
+    }
+  }
+
+  /* value -> bytes. opts.indefinite writes arrays and maps with indefinite
+   * length (the simulated keyboard answers so, as the firmware does). */
+  function cborEncode(v, opts) {
+    const out = [];
+    cborItem(out, v, !!(opts && opts.indefinite));
+    return Uint8Array.from(out);
+  }
+
+  /* bytes -> value. Maps become plain objects, byte strings Uint8Array.
+   * Throws on truncated input, trailing bytes, tags, floats and
+   * indefinite-length strings. */
+  function cborDecode(d) {
+    let p = 0;
+    const need = (n) => {
+      if (p + n > d.length) throw new Error("CBOR: truncated");
+    };
+    const arg = (minor) => {
+      if (minor < 24) return minor;
+      const len = { 24: 1, 25: 2, 26: 4, 27: 8 }[minor];
+      if (!len) throw new Error("CBOR: bad length field " + minor);
+      need(len);
+      let n = 0;
+      for (let i = 0; i < len; i++) n = n * 256 + d[p++];
+      if (!Number.isSafeInteger(n)) throw new Error("CBOR: integer too large");
+      return n;
+    };
+    const item = (depth) => {
+      if (depth > 16) throw new Error("CBOR: nested too deep");
+      need(1);
+      const ib = d[p++];
+      const major = ib >> 5;
+      const minor = ib & 31;
+      if (major === 0) return arg(minor);
+      if (major === 1) return -1 - arg(minor);
+      if (major === 2 || major === 3) {
+        if (minor === 31) throw new Error("CBOR: indefinite-length string");
+        const n = arg(minor);
+        need(n);
+        const s = d.slice(p, p + n);
+        p += n;
+        return major === 2 ? s : utf8In.decode(s);
+      }
+      if (major === 4 || major === 5) {
+        const indef = minor === 31;
+        const n = indef ? Infinity : arg(minor);
+        const out = major === 4 ? [] : {};
+        for (let i = 0; i < n; i++) {
+          need(1);
+          if (indef && d[p] === 0xff) {
+            p++;
+            break;
+          }
+          if (major === 4) {
+            out.push(item(depth + 1));
+            continue;
+          }
+          const k = item(depth + 1);
+          if (typeof k !== "string" && typeof k !== "number") throw new Error("CBOR: map key type");
+          const v = item(depth + 1);
+          if (k !== "__proto__") out[k] = v;
+        }
+        return out;
+      }
+      if (major === 7) {
+        if (minor === 20) return false;
+        if (minor === 21) return true;
+        if (minor === 22 || minor === 23) return null;
+        throw new Error("CBOR: unsupported simple value " + minor);
+      }
+      throw new Error("CBOR: unsupported major type " + major);
+    };
+    const v = item(0);
+    if (p !== d.length) throw new Error("CBOR: trailing bytes");
+    return v;
+  }
+
+  /* SMP (mcumgr) frame: an 8-byte header (op, flags, payload length, group,
+   * sequence number, command; big-endian), then the CBOR payload. The version
+   * bits stay 0 (SMP v1), as reverse/tools/restore_original.py sends. */
+  const SMP = { READ: 0, WRITE: 2, HDR: 8, GROUP_OS: 0, GROUP_IMG: 1, GROUP_CFG: 67 };
+
+  function smpFrame(op, group, cmd, seq, payload) {
+    if (payload.length > 0xffff) throw new RangeError("SMP: payload too large");
+    const f = new Uint8Array(SMP.HDR + payload.length);
+    f.set([op & 7, 0, payload.length >> 8, payload.length & 255, group >> 8, group & 255, seq & 255, cmd & 255]);
+    f.set(payload, SMP.HDR);
+    return f;
+  }
+
+  function smpRequest(op, group, cmd, seq, body) {
+    return smpFrame(op, group, cmd, seq, cborEncode(body));
+  }
+
+  function smpParse(frame) {
+    if (frame.length < SMP.HDR) throw new Error("SMP: frame too short");
+    const len = (frame[2] << 8) | frame[3];
+    if (frame.length < SMP.HDR + len) throw new Error("SMP: frame shorter than its header says");
+    return {
+      op: frame[0] & 7,
+      flags: frame[1],
+      len,
+      group: (frame[4] << 8) | frame[5],
+      seq: frame[6],
+      cmd: frame[7],
+      body: len ? cborDecode(frame.subarray(SMP.HDR, SMP.HDR + len)) : {},
+    };
+  }
+
+  Object.assign(C, { cborEncode, cborDecode, SMP, smpFrame, smpRequest, smpParse });
+
+  /* DeviceError: the keyboard answered with a non-zero rc. TransportError: no
+   * answer (after the retry), the link closed, or a write failed; the page
+   * then reports the connection as lost. */
+  class DeviceError extends Error {
+    constructor(rc) {
+      super("the keyboard refused the request (rc " + rc + ")");
+      this.name = "DeviceError";
+      this.rc = rc;
+    }
+  }
+
+  class TransportError extends Error {
+    constructor(message) {
+      super(message);
+      this.name = "TransportError";
+    }
+  }
+
+  /* One request at a time over a transport: {send(frame) -> Promise, onPacket,
+   * onClose, close()}; the transport calls onPacket(frame) for every SMP frame
+   * it receives and onClose(err) when the link goes away. A reply matches by
+   * op, group, command and the sequence number of any attempt of the request,
+   * so a late answer to the first attempt still counts. timeoutMs per attempt
+   * (2 s USB, 5 s Bluetooth), retries more attempts (1). The timer starts
+   * before send() is awaited but cannot cut it short, so send() must always
+   * settle (reject on loss, close and its own deadline). */
+  class SmpClient {
+    constructor(transport, opts) {
+      this.transport = transport;
+      this.timeoutMs = opts.timeoutMs;
+      this.retries = opts.retries === undefined ? 1 : opts.retries;
+      this.seq = 0;
+      this.queue = Promise.resolve();
+      this.waiting = null;
+      this.closed = false;
+      this.onClose = null;
+      transport.onPacket = (frame) => this._packet(frame);
+      transport.onClose = (err) => this._lost(err);
+    }
+
+    /* -> the reply body; opts {timeoutMs, retries} override the defaults. */
+    request(op, group, cmd, body, opts) {
+      const run = () => this._request(op, group, cmd, body || {}, opts || {});
+      const p = this.queue.then(run, run);
+      this.queue = p.catch(() => {});
+      return p;
+    }
+
+    async _request(op, group, cmd, body, opts) {
+      const timeoutMs = opts.timeoutMs === undefined ? this.timeoutMs : opts.timeoutMs;
+      const retries = opts.retries === undefined ? this.retries : opts.retries;
+      const seqs = [];
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        if (this.closed) throw new TransportError("not connected");
+        const seq = this.seq;
+        this.seq = (this.seq + 1) & 255;
+        seqs.push(seq);
+        let timer;
+        const answer = new Promise((resolve) => {
+          this.waiting = { op: op + 1, group, cmd, seqs, resolve };
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        });
+        try {
+          await this.transport.send(smpRequest(op, group, cmd, seq, body));
+        } catch (e) {
+          clearTimeout(timer);
+          this.waiting = null;
+          throw new TransportError("sending failed: " + ((e && e.message) || e));
+        }
+        const msg = await answer;
+        clearTimeout(timer);
+        this.waiting = null;
+        if (msg && msg.closed) throw new TransportError("the connection closed");
+        if (msg) {
+          const b = msg.body && typeof msg.body === "object" ? msg.body : {};
+          const rc = typeof b.rc === "number" ? b.rc : (b.err && b.err.rc) || 0;
+          if (rc) throw new DeviceError(rc);
+          return b;
+        }
+      }
+      throw new TransportError("no answer from the keyboard");
+    }
+
+    _packet(frame) {
+      const w = this.waiting;
+      if (!w) return;
+      let msg;
+      try {
+        msg = smpParse(frame);
+      } catch (e) {
+        return;
+      }
+      if (msg.op !== w.op || msg.group !== w.group || msg.cmd !== w.cmd || !w.seqs.includes(msg.seq)) return;
+      w.resolve(msg);
+    }
+
+    _lost(err) {
+      if (this.closed) return;
+      this.closed = true;
+      if (this.waiting) this.waiting.resolve({ closed: true });
+      if (this.onClose) this.onClose(err);
+    }
+
+    /* The page ends the link itself: no onClose. */
+    close() {
+      this.closed = true;
+      if (this.waiting) this.waiting.resolve({ closed: true });
+    }
+  }
+
+  Object.assign(C, { DeviceError, TransportError, SmpClient });
+  // end of SMP + CBOR
+})();
+</script>
+<!-- Section: USB transport -->
+<script data-core id="usb">
+"use strict";
+(() => {
+  const C = globalThis.RainyCore;
+
+  /* SMP over the console serial port, the framing of Zephyr's mcumgr serial
+   * transport (as reverse/tools/restore_original.py does it): length (2 bytes,
+   * big-endian: packet + CRC), packet, CRC16-XMODEM of the packet (big-endian),
+   * base64, cut into lines of at most 127 bytes. The first line starts with
+   * 0x06 0x09, the others with 0x04 0x14, each ends with "\n". The same port
+   * carries the plain-text Zephyr log: a line without a frame marker is log
+   * text and is skipped (as rainy75_dfu.py does). */
+  const SERIAL_LINE_MAX = 127;
+  const B64_PER_LINE = SERIAL_LINE_MAX - 3; /* 124: 2 marker bytes and "\n" */
+  const LINE_LIMIT = 4096; /* longer lines are cut (log noise) */
+
+  function crc16(data, crc = 0) {
+    for (const b of data) {
+      crc ^= b << 8;
+      for (let i = 0; i < 8; i++) crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+    }
+    return crc;
+  }
+
+  function b64encode(data) {
+    let s = "";
+    for (let i = 0; i < data.length; i += 0x8000) s += String.fromCharCode.apply(null, data.subarray(i, i + 0x8000));
+    return btoa(s);
+  }
+
+  function b64decode(text) {
+    const s = atob(text);
+    const out = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+    return out;
+  }
+
+  /* SMP packet -> the lines to write, each a Uint8Array. */
+  function serialEncode(packet) {
+    const full = new Uint8Array(packet.length + 4);
+    const n = packet.length + 2;
+    const crc = crc16(packet);
+    full[0] = n >> 8;
+    full[1] = n & 255;
+    full.set(packet, 2);
+    full[full.length - 2] = crc >> 8;
+    full[full.length - 1] = crc & 255;
+    const b64 = b64encode(full);
+    const lines = [];
+    for (let i = 0; i < b64.length; i += B64_PER_LINE) {
+      const chunk = b64.slice(i, i + B64_PER_LINE);
+      const line = new Uint8Array(chunk.length + 3);
+      line[0] = i === 0 ? 0x06 : 0x04;
+      line[1] = i === 0 ? 0x09 : 0x14;
+      for (let j = 0; j < chunk.length; j++) line[2 + j] = chunk.charCodeAt(j);
+      line[line.length - 1] = 0x0a;
+      lines.push(line);
+    }
+    return lines;
+  }
+
+  /* Received bytes -> SMP packets. push() takes any chunk (lines may be split
+   * anywhere) and returns the packets completed by it. Each line's base64 is
+   * decoded on its own, as Zephyr does; a frame with a bad CRC or bad base64
+   * is dropped (badFrames), log lines are counted (logLines). */
+  class SerialDecoder {
+    constructor() {
+      this.line = [];
+      this.frame = null;
+      this.logLines = 0;
+      this.badFrames = 0;
+    }
+
+    push(chunk) {
+      const out = [];
+      for (const b of chunk) {
+        if (b === 0x0a) {
+          const packet = this._line(this.line);
+          this.line = [];
+          if (packet) out.push(packet);
+        } else if (this.line.length < LINE_LIMIT) {
+          this.line.push(b);
+        }
+      }
+      return out;
+    }
+
+    _line(bytes) {
+      let n = bytes.length;
+      if (n > 0 && bytes[n - 1] === 0x0d) n--;
+      const first = n >= 2 && bytes[0] === 0x06 && bytes[1] === 0x09;
+      const cont = n >= 2 && bytes[0] === 0x04 && bytes[1] === 0x14;
+      if (!first && !cont) {
+        this.logLines++;
+        return null;
+      }
+      if (cont && !this.frame) {
+        this.badFrames++;
+        return null;
+      }
+      let data;
+      try {
+        data = b64decode(String.fromCharCode.apply(null, bytes.slice(2, n)));
+      } catch (e) {
+        this.frame = null;
+        this.badFrames++;
+        return null;
+      }
+      if (first) {
+        this.frame = data;
+      } else {
+        const joined = new Uint8Array(this.frame.length + data.length);
+        joined.set(this.frame);
+        joined.set(data, this.frame.length);
+        this.frame = joined;
+      }
+      const buf = this.frame;
+      if (buf.length < 2) return null;
+      const len = (buf[0] << 8) | buf[1]; /* packet + CRC */
+      if (buf.length - 2 < len) return null; /* more lines to come */
+      this.frame = null;
+      if (buf.length - 2 > len || len < 2 || crc16(buf.subarray(2, 2 + len)) !== 0) {
+        this.badFrames++;
+        return null;
+      }
+      return buf.slice(2, len);
+    }
+  }
+
+  Object.assign(C, { SERIAL_LINE_MAX, crc16, b64encode, b64decode, serialEncode, SerialDecoder });
+
+  /* Web Serial. The keyboard has two CDC ACM ports with the same USB IDs: the
+   * console (interface 0: log and SMP) and ZMK Studio (interface 3). Web
+   * Serial cannot tell them apart, so a port is the console when it answers an
+   * SMP request (group 67 info) within PROBE_MS, sent twice; any answer
+   * counts, also rc 8 from a firmware without group 67. */
+  const USB_IDS = { usbVendorId: 0x1d50, usbProductId: 0x615e };
+  const PROBE_MS = 1000;
+  const REQUEST_MS = 2000; /* SMP request timeout per attempt over USB */
+  const WRITE_MS = 2000; /* a write that is not done by then fails (SmpClient waits for send()) */
+  const CLOSE_MS = 3000; /* a probe waits this long for the port it closes */
+  const REPLUG_WAITS = [300, 700, 1500]; /* looks after a replug, about 5 s in all */
+
+  class SerialTransport {
+    constructor(port) {
+      this.port = port;
+      this.kind = "usb";
+      this.decoder = new SerialDecoder();
+      this.onPacket = null;
+      this.onClose = null;
+      this.closed = false;
+      this.reader = null;
+      this.writer = null;
+      this.loop = null;
+      this.writeMs = WRITE_MS;
+      this.sending = new Set(); /* settle() of every write in flight */
+      this.stalled = false; /* a write was cut short: it may still sit in the stream */
+    }
+
+    async open() {
+      await this.port.open({ baudRate: 115200 });
+      try {
+        await this.port.setSignals({ dataTerminalReady: true, requestToSend: true });
+      } catch (e) {
+        /* optional: the console works without the line signals */
+      }
+      this.writer = this.port.writable.getWriter();
+      this.reader = this.port.readable.getReader();
+      this.loop = this._read();
+    }
+
+    async _read() {
+      let err = null;
+      try {
+        for (;;) {
+          const { value, done } = await this.reader.read();
+          if (done) break;
+          for (const packet of this.decoder.push(value)) if (this.onPacket) this.onPacket(packet);
+        }
+      } catch (e) {
+        err = e;
+      }
+      try {
+        this.reader.releaseLock();
+      } catch (e) {
+        /* released already */
+      }
+      this._failWrites(err || new Error("the port closed"));
+      if (!this.closed) {
+        this.closed = true;
+        if (this.onClose) this.onClose(err || new Error("the port closed"));
+      }
+    }
+
+    _failWrites(err) {
+      if (this.sending.size) this.stalled = true;
+      for (const settle of Array.from(this.sending)) settle(err);
+    }
+
+    /* Always settles: it fails when the port is lost or closed while the write
+     * is pending, and after writeMs, so SmpClient (which awaits it before its
+     * own timeout can fire) never hangs on a writer that does not drain. */
+    async send(packet) {
+      if (this.closed) throw new Error("the port is closed");
+      const lines = serialEncode(packet);
+      const all = new Uint8Array(lines.reduce((n, l) => n + l.length, 0));
+      let o = 0;
+      for (const l of lines) {
+        all.set(l, o);
+        o += l.length;
+      }
+      const write = this.writer.write(all);
+      await new Promise((resolve, reject) => {
+        let timer = null;
+        const settle = (err) => {
+          clearTimeout(timer);
+          this.sending.delete(settle);
+          if (err) reject(err);
+          else resolve();
+        };
+        this.sending.add(settle);
+        timer = setTimeout(() => {
+          this.stalled = true;
+          settle(new Error("the write timed out"));
+        }, this.writeMs);
+        write.then(() => settle(null), settle);
+      });
+    }
+
+    async close() {
+      this.closed = true;
+      this._failWrites(new Error("the port was closed"));
+      try {
+        if (this.reader) await this.reader.cancel();
+      } catch (e) {
+        /* the port is gone */
+      }
+      try {
+        if (this.loop) await this.loop;
+      } catch (e) {
+        /* the port is gone */
+      }
+      try {
+        /* a write that never finishes would keep port.close() waiting */
+        if (this.writer && this.stalled) this.writer.abort().catch(() => {});
+        if (this.writer) this.writer.releaseLock();
+      } catch (e) {
+        /* released already */
+      }
+      try {
+        await this.port.close();
+      } catch (e) {
+        /* closed already */
+      }
+    }
+  }
+
+  function isKeyboardPort(port) {
+    const i = port.getInfo();
+    return i.usbVendorId === USB_IDS.usbVendorId && i.usbProductId === USB_IDS.usbProductId;
+  }
+
+  /* -> true if p settles within ms */
+  function within(p, ms) {
+    let timer;
+    const late = new Promise((resolve) => {
+      timer = setTimeout(resolve, ms, false);
+    });
+    return Promise.race([p.then(() => true, () => true), late]).finally(() => clearTimeout(timer));
+  }
+
+  /* A port a probe let go of, while its close still runs (port -> promise). */
+  const closing = new WeakMap();
+
+  /* Closes the port of a probe that does not attach. The output is dropped
+   * (as for a stalled write): a device that does not read yet, just after a
+   * replug, would keep port.close() and the port open until it drains. Waits
+   * at most CLOSE_MS; a later probe of the port waits for the rest. */
+  async function release(port, transport, client) {
+    if (client) client.close();
+    transport.stalled = true;
+    const done = transport.close().finally(() => closing.delete(port));
+    closing.set(port, done);
+    await within(done, CLOSE_MS);
+  }
+
+  /* -> {ok: true, transport, client} for the console port, {ok: false,
+   * reason: "silent"} for a port that does not answer (the Studio port, or the
+   * console right after a replug), or {ok: false, reason: "open", error} if
+   * the port cannot be opened. Never throws; a port it does not hand on is
+   * closed again. */
+  async function probeSerial(port, probeMs = PROBE_MS) {
+    const pending = closing.get(port);
+    if (pending && !(await within(pending, CLOSE_MS))) return { ok: false, reason: "silent" };
+    const transport = new SerialTransport(port);
+    let client = null;
+    try {
+      await transport.open();
+    } catch (error) {
+      await release(port, transport, null);
+      return { ok: false, reason: "open", error };
+    }
+    try {
+      client = new C.SmpClient(transport, { timeoutMs: REQUEST_MS, retries: 1 });
+      await client.request(C.SMP.READ, C.SMP.GROUP_CFG, 0, {}, { timeoutMs: probeMs / 2, retries: 1 });
+    } catch (e) {
+      if (!(e instanceof C.DeviceError)) {
+        await release(port, transport, client);
+        return { ok: false, reason: "silent" };
+      }
+    }
+    return { ok: true, transport, client };
+  }
+
+  /* Later visits: the ports this page may use already, without a picker.
+   * waits: the pause before each look. While a port stays silent the page
+   * looks again (the Studio port always is; the console may be, just after a
+   * replug); a port busy elsewhere is not tried again. */
+  async function findGrantedPort(serial, probeMs, waits = [0]) {
+    const busy = new Set();
+    for (const ms of waits) {
+      if (ms) await new Promise((resolve) => setTimeout(resolve, ms));
+      let silent = false;
+      for (const port of await serial.getPorts()) {
+        if (!isKeyboardPort(port) || busy.has(port)) continue;
+        const r = await probeSerial(port, probeMs);
+        if (r.ok) return r;
+        if (r.reason === "open") busy.add(port);
+        else silent = true;
+      }
+      if (!silent) break;
+    }
+    return null;
+  }
+
+  function pickPort(serial) {
+    return serial.requestPort({ filters: [USB_IDS] });
+  }
+
+  const portBusyText = (e) =>
+    "The port could not be opened (" + ((e && e.message) || e) + "). Close ZMK Studio or any other " +
+    "program using it (a serial terminal, rainy75_cfg.py) and try again. While ZMK Studio is connected " +
+    "over USB, its port is busy: choose the other Rainy 75 port.";
+
+  Object.assign(C, { USB_IDS, PROBE_MS, REQUEST_MS, WRITE_MS, CLOSE_MS, REPLUG_WAITS, SerialTransport,
+    isKeyboardPort, probeSerial, findGrantedPort, pickPort, portBusyText });
+  // end of USB transport
+})();
+</script>
+<!-- Section: Bluetooth transport -->
+<script data-core id="ble">
+"use strict";
+(() => {
+  const C = globalThis.RainyCore;
+
+  /* SMP over Bluetooth: Zephyr's SMP GATT service, raw SMP frames without
+   * base64 or CRC (as reverse/tools/rainy75_rgb_ble.py). A request goes out in
+   * writes of BLE.CHUNK bytes: Web Bluetooth does not tell the ATT MTU, 20
+   * bytes fit the smallest one, and the firmware joins them
+   * (CONFIG_MCUMGR_TRANSPORT_BT_REASSEMBLY). A reply can span several
+   * notifications; it is cut by the payload length in its SMP header. */
+  const BLE = {
+    NAME: "Rainy 75 Pro",
+    SERVICE: "8d53dc1d-1db7-4cd3-868b-8a527460aa84",
+    CHAR: "da2e7828-fbce-4e01-ae9e-261174997c48",
+    CHUNK: 20,
+  };
+  const BLE_FRAME_MAX = 2048; /* a longer "frame" is noise: start over */
+  const BLE_REQUEST_MS = 5000; /* SMP request timeout per attempt over Bluetooth */
+  const BLE_WRITE_MS = 5000; /* a send that is not done by then fails (SmpClient waits for send()) */
+  const BLE_STOP_MS = 1000; /* stopNotifications() that does not answer by then: disconnect anyway */
+  const BLE_SMP_MAX = 512; /* the firmware's mcumgr buffer (CONFIG_MCUMGR_TRANSPORT_NETBUF_SIZE) */
+
+  class BleReassembler {
+    constructor() {
+      this.buf = new Uint8Array(0);
+    }
+
+    reset() {
+      this.buf = new Uint8Array(0);
+    }
+
+    /* A notification's bytes -> the SMP frames completed by them. */
+    push(chunk) {
+      const joined = new Uint8Array(this.buf.length + chunk.length);
+      joined.set(this.buf);
+      joined.set(chunk, this.buf.length);
+      this.buf = joined;
+      const out = [];
+      while (this.buf.length >= 8) {
+        const n = 8 + ((this.buf[2] << 8) | this.buf[3]);
+        if (n > BLE_FRAME_MAX) {
+          this.reset();
+          break;
+        }
+        if (this.buf.length < n) break;
+        out.push(this.buf.slice(0, n));
+        this.buf = this.buf.slice(n);
+      }
+      return out;
+    }
+  }
+
+  function bleChunks(packet, size = BLE.CHUNK) {
+    const out = [];
+    for (let i = 0; i < packet.length; i += size) out.push(packet.slice(i, i + size));
+    return out;
+  }
+
+  Object.assign(C, { BLE, BleReassembler, bleChunks });
+
+  /* Web Bluetooth. The SMP characteristic and its notifications need an
+   * authenticated bond (CONFIG_MCUMGR_TRANSPORT_BT_PERM_RW_AUTHEN), so a
+   * keyboard not paired with this computer fails at startNotifications(). */
+  const NOT_BONDED = "The keyboard is not paired with this computer. Select a free profile (Fn+F1, F2 or F3), " +
+    'pair "Rainy 75 Pro" in the system Bluetooth settings, type the code the computer shows on the keyboard, ' +
+    "then press Enter, and connect again. If the computer lists it as paired already, remove that pairing " +
+    "on both sides first.";
+
+  class NotBondedError extends Error {
+    constructor(cause) {
+      super(NOT_BONDED);
+      this.name = "NotBondedError";
+      this.cause = cause;
+    }
+  }
+
+  class BleTransport {
+    constructor(device) {
+      this.device = device;
+      this.kind = "ble";
+      this.rx = new BleReassembler();
+      this.char = null;
+      this.onPacket = null;
+      this.onClose = null;
+      this.closed = false;
+      this.writeMs = BLE_WRITE_MS;
+      this.stopMs = BLE_STOP_MS;
+      this.sending = new Set(); /* settle() of every send in flight */
+      this.tail = Promise.resolve(); /* the writes of the last send: the next one starts after them */
+      this._gone = () => {
+        if (this.closed) return;
+        this.closed = true;
+        this._failWrites(new Error("Bluetooth disconnected"));
+        if (this.onClose) this.onClose(new Error("Bluetooth disconnected"));
+      };
+      this._value = (e) => {
+        const v = e.target.value;
+        for (const p of this.rx.push(new Uint8Array(v.buffer, v.byteOffset, v.byteLength))) {
+          if (this.onPacket) this.onPacket(p);
+        }
+      };
+    }
+
+    async open() {
+      this.device.addEventListener("gattserverdisconnected", this._gone);
+      const server = await this.device.gatt.connect();
+      if (this.closed) {
+        /* the page gave up while the link was still being made */
+        this._disconnect();
+        throw new Error("closed while connecting");
+      }
+      const service = await server.getPrimaryService(BLE.SERVICE);
+      this.char = await service.getCharacteristic(BLE.CHAR);
+      this.char.addEventListener("characteristicvaluechanged", this._value);
+      try {
+        await this.char.startNotifications();
+      } catch (e) {
+        throw new NotBondedError(e);
+      }
+    }
+
+    _failWrites(err) {
+      for (const settle of Array.from(this.sending)) settle(err);
+    }
+
+    /* disconnect() also cancels a connect() that is still pending. */
+    _disconnect() {
+      try {
+        this.device.gatt.disconnect();
+      } catch (e) {
+        /* gone already */
+      }
+    }
+
+    /* Writes the chunks in order, each awaited; a send that was given up
+     * (job.stop) writes no more. */
+    async _write(packet, job) {
+      const noResponse = this.char.properties.writeWithoutResponse;
+      for (const c of bleChunks(packet)) {
+        if (job.stop) return;
+        if (noResponse) await this.char.writeValueWithoutResponse(c);
+        else await this.char.writeValueWithResponse(c);
+      }
+    }
+
+    /* Always settles: it fails when the link is lost or the transport closed
+     * while the writes are pending, and after writeMs, so SmpClient (which
+     * awaits it before its own timeout can fire) never hangs on a write that
+     * does not finish. A send starts after the writes of the one before it
+     * (also one that was given up), so chunks of two requests never mix. */
+    async send(packet) {
+      if (this.closed || !this.char) throw new Error("Bluetooth is not connected");
+      if (packet.length > BLE_SMP_MAX) {
+        throw new Error(`the request is ${packet.length} bytes, the keyboard takes at most ${BLE_SMP_MAX}`);
+      }
+      this.rx.reset();
+      const job = { stop: false };
+      const run = this.tail.then(() => this._write(packet, job));
+      this.tail = run.catch(() => {});
+      await new Promise((resolve, reject) => {
+        let timer = null;
+        const settle = (err) => {
+          clearTimeout(timer);
+          this.sending.delete(settle);
+          if (err) {
+            job.stop = true;
+            reject(err);
+          } else {
+            resolve();
+          }
+        };
+        this.sending.add(settle);
+        timer = setTimeout(() => settle(new Error("the write timed out")), this.writeMs);
+        run.then(() => settle(null), (e) => settle(e || new Error("the write failed")));
+      });
+    }
+
+    async close() {
+      this.closed = true;
+      this._failWrites(new Error("Bluetooth was closed"));
+      this.device.removeEventListener("gattserverdisconnected", this._gone);
+      if (this.char) {
+        this.char.removeEventListener("characteristicvaluechanged", this._value);
+        let timer;
+        const gaveUp = new Promise((resolve) => {
+          timer = setTimeout(resolve, this.stopMs);
+        });
+        try {
+          await Promise.race([this.char.stopNotifications(), gaveUp]);
+        } catch (e) {
+          /* gone already */
+        }
+        clearTimeout(timer);
+      }
+      this._disconnect();
+    }
+  }
+
+  /* -> {transport, client}; throws NotBondedError, or a TransportError when
+   * connecting takes longer than connectMs. */
+  async function openBle(device, connectMs = 15000) {
+    const transport = new BleTransport(device);
+    const opening = transport.open();
+    opening.catch(() => {});
+    let timer;
+    const late = new Promise((resolve, reject) => {
+      timer = setTimeout(() => reject(new C.TransportError("no Bluetooth connection")), connectMs);
+    });
+    try {
+      await Promise.race([opening, late]);
+    } catch (e) {
+      await transport.close();
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+    return { transport, client: new C.SmpClient(transport, { timeoutMs: BLE_REQUEST_MS, retries: 1 }) };
+  }
+
+  /* Later visits: a keyboard this page may use already (getDevices() is not
+   * in every browser). */
+  async function rememberedDevice(bluetooth) {
+    if (!bluetooth.getDevices) return null;
+    const devices = await bluetooth.getDevices();
+    return devices.find((d) => d.name === BLE.NAME) || null;
+  }
+
+  /* The picker lists the keyboard by name. The SMP service goes into
+   * optionalServices, not the filter: the keyboard does not advertise it, and
+   * a filter on it would hide the keyboard where the picker sees only
+   * advertisements. */
+  function pickDevice(bluetooth) {
+    return bluetooth.requestDevice({ filters: [{ name: BLE.NAME }], optionalServices: [BLE.SERVICE] });
+  }
+
+  Object.assign(C, { BLE_REQUEST_MS, BLE_WRITE_MS, BLE_STOP_MS, BLE_SMP_MAX, NOT_BONDED, NotBondedError, BleTransport,
+    openBle, rememberedDevice, pickDevice });
+  // end of Bluetooth transport
+})();
+</script>
+<!-- Section: config model -->
+<script data-core id="model">
+"use strict";
+(() => {
+  const C = globalThis.RainyCore;
+
+  /* Values, checked and shown as reverse/tools/rainy75_cfg.py does. A list
+   * entry is {key, type, a, b, ro}: type b bool, u unsigned a..b, e one of
+   * the names a, c colour 0xRRGGBB, l up to LIST_MAX of the names a, in order. */
+  const LIST_MAX = 16;
+
+  /* -> the value to send (a list without its duplicates, the first one kept),
+   * or throws an Error naming the setting. */
+  function checkValue(entry, v) {
+    const k = entry.key;
+    switch (entry.type) {
+      case "b":
+        if (typeof v !== "boolean") throw new Error(k + ": expected on or off");
+        return v;
+      case "u":
+        if (!Number.isInteger(v)) throw new Error(k + ": " + v + " is not a number");
+        if (v < entry.a || v > entry.b) throw new Error(`${k}: ${v} is outside ${entry.a}..${entry.b}`);
+        return v;
+      case "c":
+        if (!Number.isInteger(v) || v < 0 || v > 0xffffff) throw new Error(k + ": not a colour RRGGBB");
+        return v;
+      case "e":
+        if (!entry.a.includes(v)) throw new Error(`${k}: '${v}' is not one of ${entry.a.join(", ")}`);
+        return v;
+      case "l": {
+        if (!Array.isArray(v)) throw new Error(k + ": expected a list");
+        const names = v.filter((n, i) => v.indexOf(n) === i);
+        const bad = names.filter((n) => !entry.a.includes(n));
+        if (bad.length) throw new Error(`${k}: unknown ${bad.join(", ")} (known: ${entry.a.join(", ")})`);
+        if (names.length > LIST_MAX) throw new Error(`${k}: at most ${LIST_MAX} entries`);
+        return names;
+      }
+      default:
+        throw new Error(`${k}: unknown type '${entry.type}'`);
+    }
+  }
+
+  /* "#FF8000", "0xff8000" or "FF8000" -> 0xFF8000 */
+  function parseColor(text) {
+    const m = /^(?:#|0[xX])?([0-9A-Fa-f]{6})$/.exec(text);
+    if (!m) throw new Error(`'${text}' is not a colour RRGGBB (six hex digits)`);
+    return parseInt(m[1], 16);
+  }
+
+  const hex6 = (v) => v.toString(16).padStart(6, "0");
+  const formatColor = (v) => "#" + hex6(v).toUpperCase();
+  const colorInput = (v) => "#" + hex6(v); /* the form <input type=color> wants */
+
+  function formatValue(entry, v) {
+    if (entry.type === "b") return v ? "on" : "off";
+    if (entry.type === "c") return formatColor(v);
+    if (entry.type === "l") return v.join(",");
+    return String(v);
+  }
+
+  function sameValue(a, b) {
+    if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((x, i) => x === b[i]);
+    return a === b;
+  }
+
+  /* rgb.cycle as rows of a checkbox list: the listed effects first (checked,
+   * in list order), then the others (unchecked, in table order). An empty list
+   * means all effects, so all are checked. Names the page does not know
+   * (known(name) false) are not shown. */
+  function cycleRows(names, value, known) {
+    const visible = names.filter(known);
+    const listed = (value && value.length ? value : visible).filter((n) => visible.includes(n));
+    const rows = listed.map((name) => ({ name, checked: true }));
+    for (const name of visible) if (!listed.includes(name)) rows.push({ name, checked: false });
+    return rows;
+  }
+
+  /* Rows -> the list to send: the checked names in row order, then the names
+   * of the current list the page does not show, so they are kept. */
+  function cycleFromRows(rows, current, known) {
+    const v = rows.filter((r) => r.checked).map((r) => r.name);
+    for (const n of current || []) if (!known(n) && !v.includes(n)) v.push(n);
+    return v;
+  }
+
+  /* Slider sends: at most one per intervalMs and one at a time (the next waits
+   * for the reply), always the newest value. flush(v) is the value on release:
+   * it replaces the pending one and goes out like any other, at the end of the
+   * current window (so input then change on every keyboard step stays within
+   * the rate), unless v is the value sent last and that send did not fail.
+   * send(v) returns a Promise; one that rejects or resolves to false failed,
+   * and its value counts as not sent. clock: {now, setTimeout, clearTimeout},
+   * for the tests. */
+  const realClock = {
+    now: () => (typeof performance !== "undefined" ? performance.now() : Date.now()),
+    setTimeout: (f, ms) => setTimeout(f, ms),
+    clearTimeout: (id) => clearTimeout(id),
+  };
+
+  function makeThrottle(intervalMs, send, clock = realClock) {
+    const NONE = {};
+    let last = -Infinity; /* when the last send started */
+    let value;
+    let lastSent = NONE; /* the value of the last send that did not fail */
+    let has = false;
+    let release = false; /* the pending value came from flush() */
+    let busy = false;
+    let timer = null;
+    function done(ok) {
+      busy = false;
+      if (!ok) lastSent = NONE;
+      run();
+    }
+    function run() {
+      if (timer !== null) clock.clearTimeout(timer);
+      timer = null;
+      if (!has || busy) return;
+      if (release && sameValue(value, lastSent)) {
+        has = false;
+        release = false;
+        return;
+      }
+      const wait = last + intervalMs - clock.now();
+      if (wait > 0) {
+        timer = clock.setTimeout(run, wait);
+        return;
+      }
+      const v = value;
+      has = false;
+      release = false;
+      busy = true;
+      last = clock.now();
+      lastSent = v;
+      Promise.resolve()
+        .then(() => send(v))
+        .then((r) => done(r !== false), () => done(false));
+    }
+    return {
+      push(v) {
+        value = v;
+        has = true;
+        release = false;
+        if (timer === null) run();
+      },
+      flush(v) {
+        value = v;
+        has = true;
+        release = true;
+        run();
+      },
+      pending: () => has || busy || timer !== null,
+    };
+  }
+
+  Object.assign(C, {
+    LIST_MAX, checkValue, parseColor, formatColor, colorInput, formatValue, sameValue,
+    cycleRows, cycleFromRows, makeThrottle,
+  });
+
+  /* The keyboard's settings as the page sees them (docs/config-protocol.md):
+   * load() reads info, then list and get page by page and the firmware
+   * version; poll() (every second) reads info and re-reads all values when
+   * rev changed (rev is only compared for inequality), kb.os_keys every
+   * OS_KEYS_EVERY polls as well (a ZMK Studio keymap edit changes it without
+   * changing rev); set() keeps the value the keyboard echoes, also against
+   * a full read that started before it (see _read). Listeners get
+   * {type: "loaded"} (entries changed: render again) and {type: "values",
+   * keys} (keys undefined: all). known(entry) tells which settings the page
+   * can show; the others are counted by hiddenCount(). */
+  const CMD = { INFO: 0, LIST: 1, GET: 2, SET: 3, RESET: 4 };
+  const OS_KEYS_EVERY = 5;
+  const PAGES_MAX = 64;
+  /* As RC_TEXT in reverse/tools/rainy75_cfg.py, except rc 8: load() turns rc 8
+   * on the first info into NoSettingsError, so it only shows here after a
+   * successful load, where it means an unknown command or the wrong op. */
+  const RC_TEXT = { 3: "invalid value", 5: "unknown setting", 7: "reply too large", 8: "not supported",
+    11: "read-only setting" };
+  const NO_SETTINGS = "This firmware has no runtime settings (mcumgr group 67, new in v0.4.0). " +
+    "Update the keyboard's firmware, then connect again.";
+
+  class NoSettingsError extends Error {
+    constructor() {
+      super(NO_SETTINGS);
+      this.name = "NoSettingsError";
+    }
+  }
+
+  function errorText(e) {
+    if (e instanceof C.DeviceError) return `The keyboard refused: ${RC_TEXT[e.rc] || "error"} (rc ${e.rc}).`;
+    if (e instanceof C.TransportError) return "Connection lost: " + e.message + ".";
+    return (e && e.message) || String(e);
+  }
+
+  class ConfigModel {
+    constructor(client, known) {
+      this.client = client;
+      this.known = known || (() => true);
+      this.info = null;
+      this.entries = new Map();
+      this.values = new Map();
+      this.firmware = null;
+      this.polls = 0;
+      this.writes = 0; /* sets that stored an echo */
+      this.wroteAt = new Map(); /* key -> the number of its last echo */
+      this.listeners = [];
+    }
+
+    on(fn) {
+      this.listeners.push(fn);
+    }
+
+    _emit(ev) {
+      for (const fn of this.listeners) fn(ev);
+    }
+
+    _cfg(op, cmd, body) {
+      return this.client.request(op, C.SMP.GROUP_CFG, cmd, body);
+    }
+
+    async load() {
+      let info;
+      try {
+        info = await this._cfg(C.SMP.READ, CMD.INFO, {});
+      } catch (e) {
+        if (e instanceof C.DeviceError && e.rc === 8) throw new NoSettingsError();
+        throw e;
+      }
+      const entries = await this._readList();
+      const values = await this._readAll();
+      const firmware = await this._firmware();
+      /* Everything at the end: a failed read leaves the old state, and the next poll tries again. */
+      this.info = { v: info.v, n: info.n, fx: info.fx || [], rev: info.rev };
+      this.entries = entries;
+      this.values = values;
+      this.firmware = firmware;
+      this._emit({ type: "loaded" });
+    }
+
+    async _readList() {
+      const entries = new Map();
+      let i = 0;
+      for (let page = 0; page < PAGES_MAX; page++) {
+        const r = await this._cfg(C.SMP.READ, CMD.LIST, { i });
+        for (const s of r.s || []) entries.set(s[0], { key: s[0], type: s[1], a: s[2], b: s[3], ro: !!(s[4] & 1) });
+        if (typeof r.next !== "number" || r.next <= i) break;
+        i = r.next;
+      }
+      return entries;
+    }
+
+    /* All values, or those of keys; follows next page by page. The client
+     * runs one request at a time, so a set started meanwhile runs between two
+     * pages and an earlier page may hold the value from before it: the echo
+     * of a set that stored one during the read replaces that value (the echo
+     * is the truth; a later change by the keyboard shows in rev). */
+    async _read(keys) {
+      const start = this.writes;
+      const out = {};
+      let i = 0;
+      for (let page = 0; page < PAGES_MAX; page++) {
+        const r = await this._cfg(C.SMP.READ, CMD.GET, keys ? { k: keys, i } : { i });
+        Object.assign(out, r.v || {});
+        if (typeof r.next !== "number" || r.next <= i) break;
+        i = r.next;
+      }
+      for (const [k, n] of this.wroteAt) if (n > start && k in out) out[k] = this.values.get(k);
+      return out;
+    }
+
+    /* Every value as a Map. */
+    async _readAll() {
+      return new Map(Object.entries(await this._read()));
+    }
+
+    /* The running image from the image list (group 1); null if unknown. */
+    async _firmware() {
+      try {
+        const r = await this.client.request(C.SMP.READ, C.SMP.GROUP_IMG, 0, {});
+        const images = r.images || [];
+        const img = images.find((x) => x.active) || images.find((x) => x.slot === 0);
+        return img ? { version: String(img.version || "?"), confirmed: !!img.confirmed } : null;
+      } catch (e) {
+        if (e instanceof C.TransportError) throw e;
+        return null;
+      }
+    }
+
+    hiddenCount() {
+      let n = 0;
+      for (const e of this.entries.values()) if (!this.known(e)) n++;
+      return n;
+    }
+
+    async poll() {
+      const info = await this._cfg(C.SMP.READ, CMD.INFO, {});
+      this.polls++;
+      if (info.n !== this.info.n || !C.sameValue(info.fx || [], this.info.fx)) {
+        await this.load();
+        return;
+      }
+      if (info.rev !== this.info.rev) {
+        this.values = await this._readAll();
+        this.info.rev = info.rev; /* only after the read: a failed one is tried again */
+        this._emit({ type: "values" });
+      } else if (this.polls % OS_KEYS_EVERY === 0) {
+        await this.refresh(["kb.os_keys"]);
+      }
+    }
+
+    /* Re-read some values (keys the keyboard does not list are skipped). */
+    async refresh(keys) {
+      const present = keys.filter((k) => this.entries.has(k));
+      if (!present.length) return;
+      const v = await this._read(present);
+      for (const k of Object.keys(v)) this.values.set(k, v[k]);
+      this._emit({ type: "values", keys: present });
+    }
+
+    /* -> the value as stored. A refusal (DeviceError) re-reads the value
+     * before it is thrown on, so the page shows what the keyboard has. */
+    async set(key, value) {
+      const entry = this.entries.get(key);
+      if (!entry) throw new Error("unknown setting " + key);
+      const v = C.checkValue(entry, value);
+      try {
+        const r = await this._cfg(C.SMP.WRITE, CMD.SET, { k: key, v });
+        this.values.set(key, r.v);
+        this.wroteAt.set(key, ++this.writes);
+        this._emit({ type: "values", keys: [key] });
+        return r.v;
+      } catch (e) {
+        if (e instanceof C.DeviceError) await this.refresh([key]).catch(() => {});
+        throw e;
+      }
+    }
+
+    /* Back to the defaults: keys, or every writable setting. The values are
+     * read again afterwards; a refusal (DeviceError) also reads them, as set()
+     * does, before it is thrown on; a lost connection is thrown at once. */
+    async reset(keys) {
+      try {
+        await this._cfg(C.SMP.WRITE, CMD.RESET, keys ? { k: keys } : {});
+      } catch (e) {
+        if (e instanceof C.DeviceError) await this._reloadValues().catch(() => {});
+        throw e;
+      }
+      await this._reloadValues();
+    }
+
+    async _reloadValues() {
+      this.values = await this._readAll();
+      this._emit({ type: "values" });
+    }
+  }
+
+  Object.assign(C, { CMD, OS_KEYS_EVERY, RC_TEXT, NO_SETTINGS, NoSettingsError, errorText, ConfigModel });
+  // end of config model
+})();
+</script>
+<!-- Section: simulated keyboard (?demo and the tests) -->
+<script data-core id="demo">
+"use strict";
+(() => {
+  const C = globalThis.RainyCore;
+
+  /* A keyboard in software: group 67 as zmk/src/config/cfg_mgmt.c answers it
+   * (the same table, paging with the same size estimates and page budget,
+   * errors, rev), group 1 image list (the firmware version), everything else
+   * rc 8. Replies use indefinite-length arrays and maps, as zcbor writes
+   * them. It includes the PR 5 sleep settings, so the demo shows every
+   * setting the page knows. */
+  const EFFECTS = ["solid", "rainbow", "plasma", "twinkle", "comet", "aurora", "reactive", "ripple",
+    "wave", "rain", "heatmap", "speedcolour"];
+  const RC = { EINVAL: 3, ENOENT: 5, ENOTSUP: 8, EACCESSDENIED: 11 };
+  const PAGE_BUDGET = 360; /* CFG_PAGE_BUDGET */
+  const KEYS_MAX = 32; /* CFG_MAX: keys in one get or reset */
+
+  function simTable(fx) {
+    return [
+      { key: "rgb.on", type: "b", def: true },
+      { key: "rgb.effect", type: "e", names: fx, def: "solid" },
+      { key: "rgb.hue", type: "u", min: 0, max: 255, def: 0 },
+      { key: "rgb.sat", type: "u", min: 0, max: 255, def: 255 },
+      { key: "rgb.val", type: "u", min: 16, max: 255, def: 200 },
+      { key: "rgb.speed", type: "u", min: 1, max: 255, def: 32 },
+      { key: "rgb.boot_effect", type: "e", names: ["last"].concat(fx), def: "last" },
+      { key: "rgb.cycle", type: "l", names: fx, def: fx.slice(0, C.LIST_MAX) },
+      { key: "rgb.val_battery", type: "u", min: 16, max: 255, def: 255 },
+      { key: "rgb.idle_s", type: "u", min: 0, max: 3600, def: 0 },
+      { key: "rgb.idle_mode", type: "e", names: ["off", "dim"], def: "off" },
+      { key: "ind.caps_style", type: "e", names: ["key", "tint", "off"], def: "key" },
+      { key: "ind.caps_color", type: "c", def: 0xffffff },
+      { key: "ind.fn_highlight", type: "b", def: true },
+      { key: "ind.passkey_guide", type: "b", def: true },
+      { key: "ind.bat_low", type: "u", min: 0, max: 50, def: 0 },
+      { key: "kb.os", type: "e", names: ["win", "mac"], def: "win" },
+      { key: "kb.gui_lock", type: "b", def: false },
+      { key: "kb.os_keys", type: "u", min: 0, max: 83, def: 2, ro: true },
+      { key: "kb.sleep_min", type: "u", min: 0, max: 120, def: 15 },
+      { key: "kb.sleep_on_usb", type: "b", def: false },
+    ];
+  }
+
+  const copy = (v) => (Array.isArray(v) ? v.slice() : v);
+  const isMap = (b) => b !== null && typeof b === "object" && !Array.isArray(b) && !ArrayBuffer.isView(b);
+  const textSize = (s) => new TextEncoder().encode(s).length;
+
+  class SimKeyboard {
+    /* opts: effects (names), extra (more table rows), budget (page budget),
+     * noConfig (a build without group 67, as v0.3.x), version, confirmed. */
+    constructor(opts = {}) {
+      this.fx = (opts.effects || EFFECTS).slice();
+      this.defs = simTable(this.fx).concat(opts.extra || []);
+      this.budget = opts.budget || PAGE_BUDGET;
+      this.noConfig = !!opts.noConfig;
+      this.version = opts.version || "0.4.0";
+      this.confirmed = opts.confirmed !== false;
+      this.values = {};
+      for (const d of this.defs) this.values[d.key] = copy(d.def);
+      this.rev = 0;
+      this.failNextSet = 0; /* rc for the next set (tests) */
+      this.requests = []; /* {op, group, cmd, body} of every request */
+    }
+
+    /* Fn+Enter: the next effect of rgb.cycle, as cfg_cycle_next(). */
+    pressFnEnter() {
+      const cur = this.fx.indexOf(this.values["rgb.effect"]);
+      const list = this.values["rgb.cycle"].map((n) => this.fx.indexOf(n));
+      let next = (cur + 1) % this.fx.length;
+      if (list.length) {
+        const j = list.indexOf(cur);
+        next = j < 0 ? list[0] : list[(j + 1) % list.length];
+      }
+      this.values["rgb.effect"] = this.fx[next];
+      this.rev++;
+    }
+
+    /* A keymap change in ZMK Studio: kb.os_keys changes, rev does not. */
+    setOsKeys(n) {
+      this.values["kb.os_keys"] = n;
+    }
+
+    /* A request frame -> the reply frame. */
+    handle(frame) {
+      const h = C.smpParse(frame);
+      const body = h.len ? h.body : null;
+      this.requests.push({ op: h.op, group: h.group, cmd: h.cmd, body });
+      const reply = this._dispatch(h, body);
+      return C.smpFrame(h.op + 1, h.group, h.cmd, h.seq, C.cborEncode(reply, { indefinite: true }));
+    }
+
+    _dispatch(h, body) {
+      if (h.group === C.SMP.GROUP_IMG && h.cmd === 0 && h.op === C.SMP.READ) {
+        return {
+          images: [{ slot: 0, version: this.version, hash: new Uint8Array(32), bootable: true, pending: false,
+            confirmed: this.confirmed, active: true, permanent: false }],
+          splitStatus: 0,
+        };
+      }
+      if (h.group !== C.SMP.GROUP_CFG || this.noConfig) return { rc: RC.ENOTSUP };
+      const cmds = [
+        [C.SMP.READ, () => this._info()],
+        [C.SMP.READ, () => this._list(body)],
+        [C.SMP.READ, () => this._get(body)],
+        [C.SMP.WRITE, () => this._set(body)],
+        [C.SMP.WRITE, () => this._reset(body)],
+      ];
+      const c = cmds[h.cmd];
+      if (!c || c[0] !== h.op) return { rc: RC.ENOTSUP };
+      if (h.cmd > 0 && !isMap(body)) return { rc: RC.EINVAL };
+      return c[1]();
+    }
+
+    _find(key) {
+      return this.defs.findIndex((d) => d.key === key);
+    }
+
+    _names(names) {
+      return names.reduce((s, n) => s + 2 + textSize(n), 2);
+    }
+
+    _entrySize(d) {
+      const s = 2 + (2 + textSize(d.key)) + 2 + 2;
+      if (d.type === "u") return s + 10;
+      if (d.type === "e" || d.type === "l") return s + this._names(d.names) + 1;
+      return s + 2;
+    }
+
+    _valueSize(d, v) {
+      const s = 2 + textSize(d.key);
+      if (d.type === "e") return s + 2 + textSize(v);
+      if (d.type === "l") return s + this._names(v);
+      return s + 5;
+    }
+
+    _info() {
+      return { rc: 0, v: 1, n: this.defs.length, fx: this.fx.slice(), rev: this.rev };
+    }
+
+    _start(b) {
+      if (!("i" in b)) return 0;
+      return Number.isInteger(b.i) && b.i >= 0 ? b.i : -1;
+    }
+
+    _list(b) {
+      const start = this._start(b);
+      if (start < 0) return { rc: RC.EINVAL };
+      const s = [];
+      let used = 0;
+      let i;
+      for (i = start; i < this.defs.length; i++) {
+        const d = this.defs[i];
+        const size = this._entrySize(d);
+        if (i > start && used + size > this.budget) break;
+        used += size;
+        const ab = d.type === "u" ? [d.min, d.max] : d.names ? [d.names.slice(), null] : [null, null];
+        s.push([d.key, d.type, ab[0], ab[1], d.ro ? 1 : 0]);
+      }
+      const r = { rc: 0, s };
+      if (i < this.defs.length) r.next = i;
+      return r;
+    }
+
+    _keysOk(b) {
+      return Array.isArray(b.k) && b.k.length <= KEYS_MAX && b.k.every((k) => typeof k === "string");
+    }
+
+    _get(b) {
+      const start = this._start(b);
+      if (start < 0) return { rc: RC.EINVAL };
+      let ids = null;
+      if ("k" in b) {
+        if (!this._keysOk(b)) return { rc: RC.EINVAL };
+        ids = b.k.map((k) => this._find(k));
+        if (ids.includes(-1)) return { rc: RC.ENOENT };
+      }
+      const total = ids ? ids.length : this.defs.length;
+      const v = {};
+      let used = 0;
+      let pos;
+      for (pos = start; pos < total; pos++) {
+        const id = ids ? ids[pos] : pos;
+        if (ids && ids.slice(0, pos).includes(id)) continue;
+        const d = this.defs[id];
+        const size = this._valueSize(d, this.values[d.key]);
+        if (used > 0 && used + size > this.budget) break;
+        used += size;
+        v[d.key] = copy(this.values[d.key]);
+      }
+      const r = { rc: 0, v };
+      if (pos < total) r.next = pos;
+      return r;
+    }
+
+    _check(d, v) {
+      switch (d.type) {
+        case "b":
+          return typeof v === "boolean" ? v : undefined;
+        case "u":
+          return Number.isInteger(v) && v >= d.min && v <= d.max ? v : undefined;
+        case "c":
+          return Number.isInteger(v) && v >= 0 && v <= 0xffffff ? v : undefined;
+        case "e":
+          return typeof v === "string" && d.names.includes(v) ? v : undefined;
+        case "l":
+          if (!Array.isArray(v) || v.length > C.LIST_MAX) return undefined;
+          if (!v.every((n) => typeof n === "string" && d.names.includes(n))) return undefined;
+          return v.filter((n, i) => v.indexOf(n) === i);
+        default:
+          return undefined;
+      }
+    }
+
+    /* What decode_any() in cfg_mgmt.c reads: a bool, an unsigned 32-bit
+     * integer, text, or up to 16 texts. Anything else fails the whole request
+     * with EINVAL, before the key is looked up. */
+    _decodable(v) {
+      if (typeof v === "boolean" || typeof v === "string") return true;
+      if (Number.isInteger(v)) return v >= 0 && v <= 0xffffffff;
+      return Array.isArray(v) && v.length <= C.LIST_MAX && v.every((n) => typeof n === "string");
+    }
+
+    _set(b) {
+      if (typeof b.k !== "string" || !("v" in b) || !this._decodable(b.v)) return { rc: RC.EINVAL };
+      const i = this._find(b.k);
+      if (i < 0) return { rc: RC.ENOENT };
+      const d = this.defs[i];
+      if (d.ro) return { rc: RC.EACCESSDENIED };
+      if (this.failNextSet) {
+        const rc = this.failNextSet;
+        this.failNextSet = 0;
+        return { rc };
+      }
+      const v = this._check(d, b.v);
+      if (v === undefined) return { rc: RC.EINVAL };
+      this.values[d.key] = v;
+      this.rev++;
+      return { rc: 0, v: copy(v) };
+    }
+
+    _reset(b) {
+      let ids = this.defs.map((d, i) => i).filter((i) => !this.defs[i].ro);
+      if ("k" in b) {
+        if (!this._keysOk(b)) return { rc: RC.EINVAL };
+        ids = [];
+        for (const k of b.k) {
+          const i = this._find(k);
+          if (i < 0) return { rc: RC.ENOENT };
+          if (this.defs[i].ro) return { rc: RC.EACCESSDENIED };
+          ids.push(i);
+        }
+      }
+      for (const i of ids) {
+        this.values[this.defs[i].key] = copy(this.defs[i].def);
+        this.rev++;
+      }
+      return { rc: 0 };
+    }
+  }
+
+  /* SimKeyboard as a transport for SmpClient, answering after latencyMs;
+   * drop: requests to swallow (tests), lose(): the link goes away. */
+  class SimTransport {
+    constructor(sim, opts = {}) {
+      this.sim = sim;
+      this.kind = "demo";
+      this.latencyMs = opts.latencyMs === undefined ? 10 : opts.latencyMs;
+      this.drop = 0;
+      this.onPacket = null;
+      this.onClose = null;
+      this.closed = false;
+    }
+
+    async send(frame) {
+      if (this.closed) throw new Error("closed");
+      if (this.drop > 0) {
+        this.drop--;
+        return;
+      }
+      const reply = this.sim.handle(frame);
+      setTimeout(() => {
+        if (!this.closed && this.onPacket) this.onPacket(reply);
+      }, this.latencyMs);
+    }
+
+    async close() {
+      this.closed = true;
+    }
+
+    lose() {
+      this.closed = true;
+      if (this.onClose) this.onClose(new Error("simulated loss"));
+    }
+  }
+
+  /* ?demo=future: a setting and an effect this page does not know;
+   * ?demo=old: a firmware without group 67; ?demo=test: an unconfirmed image. */
+  function demoOptions(variant) {
+    if (variant === "future") {
+      return {
+        effects: EFFECTS.concat(["fireworks"]),
+        extra: [{ key: "rgb.future", type: "u", min: 0, max: 9, def: 1 }],
+      };
+    }
+    if (variant === "old") return { noConfig: true, version: "0.3.3" };
+    if (variant === "test") return { confirmed: false };
+    return {};
+  }
+
+  Object.assign(C, { SIM_EFFECTS: EFFECTS, SimKeyboard, SimTransport, demoOptions });
+})();
+</script>
+<!-- Section: labels and help -->
+<script data-core id="labels">
+"use strict";
+(() => {
+  const C = globalThis.RainyCore;
+
+  /* What the page shows for each setting it knows, in display order. The
+   * firmware sends keys, types and ranges only (docs/config-protocol.md); a
+   * key that is not here, or has another type, is hidden and counted in the
+   * "need a newer page" note. show(v) formats a number for its output. */
+  const SECTIONS = [
+    { id: "rgb", title: "Lighting" },
+    { id: "ind", title: "Indicators" },
+    { id: "kb", title: "Keyboard" },
+  ];
+
+  const secs = (v) => (v < 60 ? v + " s" : Math.floor(v / 60) + " min" + (v % 60 ? " " + (v % 60) + " s" : ""));
+  /* The known limit of "USB host connected" (docs/config-protocol.md). */
+  const usbLimit = (what) => "If the computer put USB to sleep and the cable is then pulled, " + what +
+    " may not apply until the next USB event.";
+
+  const SETTINGS = [
+    { key: "rgb.on", type: "b", label: "Lighting on",
+      help: "The effect on or off (Fn+Backspace). The CapsLock key, the Fn highlight, the battery gauge " +
+        "and the Bluetooth status still show when it is off; the CapsLock tint and the low-battery pulse " +
+        "do not." },
+    { key: "rgb.effect", type: "e", label: "Effect",
+      help: "The lighting effect. Fn+Enter steps to the next effect of the effect cycle." },
+    { key: "rgb.hue", type: "u", label: "Hue",
+      help: "The colour of the effect, once around the colour wheel (Fn + the # key left of Enter)." },
+    { key: "rgb.sat", type: "u", label: "Saturation", help: "0 is white, 255 the full colour." },
+    { key: "rgb.val", type: "u", label: "Brightness", help: "Brightness of the effect (Fn+Up, Fn+Down)." },
+    { key: "rgb.speed", type: "u", label: "Speed", help: "Animation speed (Fn+Right, Fn+Left)." },
+    { key: "rgb.cycle", type: "l", label: "Effect cycle",
+      help: "The effects Fn+Enter steps through, in this order; from an effect that is not in the list it " +
+        "goes to the first one. Tick the ones you want and drag them, or use the up and down arrow " +
+        "buttons (Move up, Move down) of a row, to set the order. At least one stays ticked. A list " +
+        "holds at most 16 entries. Applies from the next Fn+Enter." },
+    { key: "rgb.boot_effect", type: "e", label: "Effect at power-on",
+      help: "Last used keeps the effect you chose last. Applies from the next start." },
+    { key: "rgb.val_battery", type: "u", label: "Brightness cap without USB",
+      help: "While no USB host is connected (a sleeping computer still counts as one), the effect is " +
+        "drawn at most this bright; the Brightness setting itself does not change. 255 = no cap. " +
+        usbLimit("the cap"),
+      show: (v) => (v === 255 ? "255, no cap" : String(v)) },
+    { key: "rgb.idle_s", type: "u", label: "Idle after",
+      help: "Time without a key press until the effect turns off or dims; 0 = never. The next key press " +
+        "brings it back. The CapsLock key, the Fn highlight, the battery gauge and the Bluetooth status " +
+        "keep showing.",
+      show: (v) => (v === 0 ? "Never" : secs(v)) },
+    { key: "rgb.idle_mode", type: "e", label: "When idle",
+      help: "Off turns the effect off, Dim draws it at a quarter of its brightness. With Off the CapsLock " +
+        "tint and the low-battery pulse go dark too, because they need the effect." },
+    { key: "ind.caps_style", type: "e", label: "CapsLock indicator",
+      help: "Key lights the CapsLock key in the colour below at full strength, Tint mixes every key half " +
+        "and half with it, Off shows nothing. Tint is as bright as the effect (it follows Brightness, the " +
+        "cap without USB and Dim) and shows only while the effect is drawn: not with the lighting off or " +
+        "idle Off, not during a Bluetooth animation and not while Fn is held with the Fn highlight on." },
+    { key: "ind.caps_color", type: "c", label: "CapsLock colour", help: "The colour of the CapsLock indicator." },
+    { key: "ind.fn_highlight", type: "b", label: "Fn highlight",
+      help: "While Fn is held, keys with an Fn function light white and the others go dark. Follows " +
+        "keymap changes made in ZMK Studio. Off leaves the lighting as it is; F1 to F4 still show the " +
+        "Bluetooth slots." },
+    { key: "ind.passkey_guide", type: "b", label: "Pairing code guide",
+      help: "Lights the number row while the computer asks for a Bluetooth pairing code: dim white, a " +
+        "blue digit per key you type, Enter pulsing, a blue chase while the code is checked, a red " +
+        "flash for a wrong code. With it off, nothing on the keyboard shows that a code is expected: " +
+        "the pairing dialog on the computer is the only cue. The F1 to F4 status stays." },
+    { key: "ind.bat_low", type: "u", label: "Low battery warning",
+      help: "While no USB host is connected (a sleeping computer still counts as one), Esc pulses red " +
+        "when the battery is below this level; 0 = off. The pulse shows only while the effect is drawn, " +
+        "so never with the lighting off or idle Off: press Fn+B for the battery gauge, which shows for " +
+        "3 s. " + usbLimit("the warning"),
+      show: (v) => (v === 0 ? "Off" : v + " %") },
+    { key: "kb.os", type: "e", label: "Computer",
+      help: "Windows: the left Win and Alt keys send Win and Alt. Mac: the left Win key sends Option and " +
+        "the left Alt key sends Command, as on a Mac keyboard. Right Alt stays AltGr. Applies from the " +
+        "next key press, to the keys that use the OS Key behavior." },
+    { key: "kb.gui_lock", type: "b", label: "GUI key lock",
+      help: "Silences the GUI key, for example while gaming: the left Win key with Windows, the left Alt " +
+        "key (Command) with Mac." },
+    { key: "kb.os_keys", type: "u", label: "Keys following these settings",
+      help: "How many keys use the OS Key behavior, counted from the live keymap: 2 with the default " +
+        "keymap. It follows ZMK Studio edits at once, saved or not." },
+    { key: "kb.sleep_min", type: "u", label: "Sleep after",
+      help: "Minutes without a key press until the keyboard sleeps; 0 = never. With a USB host connected " +
+        "it sleeps only if Sleep on USB is on. A key press wakes it, which takes a few seconds.",
+      show: (v) => (v === 0 ? "Never" : v + " min") },
+    { key: "kb.sleep_on_usb", type: "b", label: "Sleep on USB",
+      help: "Also sleep while a USB host is connected. Off: the keyboard stays awake on USB, also while " +
+        "the computer sleeps, so a key press can wake the computer." },
+  ];
+
+  const EFFECTS = {
+    solid: ["Solid", "One colour on every key."],
+    rainbow: ["Rainbow", "A rainbow moving along the keys."],
+    plasma: ["Plasma", "Flowing colour waves."],
+    twinkle: ["Twinkle", "Keys sparkle at random."],
+    comet: ["Comet", "A bright dot with a fading tail runs along the keys."],
+    aurora: ["Aurora", "A slow drift between two neighbouring colours."],
+    reactive: ["Reactive", "The whole board flashes on every key press."],
+    ripple: ["Ripple", "Rainbow rings spread from each key you press."],
+    wave: ["Wave", "A diagonal wave moves across the board."],
+    rain: ["Rain", "Drops fall from the top row to the bottom."],
+    heatmap: ["Heatmap", "Keys glow when pressed and cool down over time."],
+    speedcolour: ["Speed colour", "The colour deepens the faster you type."],
+    walker: ["Walker (diagnostic)", "Lights one LED and steps to the next on each key press, for LED calibration."],
+  };
+  const EFFECT_KEYS = ["rgb.effect", "rgb.cycle", "rgb.boot_effect"];
+
+  const NAMES = {
+    "rgb.boot_effect": { last: "Last used" },
+    "rgb.idle_mode": { off: "Off", dim: "Dim" },
+    "ind.caps_style": { key: "Key", tint: "Tint", off: "Off" },
+    "kb.os": { win: "Windows", mac: "Mac" },
+  };
+
+  const OS_KEYS_WARNING = "No key uses the OS Key behavior, so the Computer and GUI key lock settings do " +
+    "nothing. The left Win and Alt keys were probably rebound in ZMK Studio. Choose OS Key for them there " +
+    "again and save, or use Restore Stock Settings in ZMK Studio (it also drops your other saved edits).";
+
+  const byKey = new Map(SETTINGS.map((s) => [s.key, s]));
+  const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+
+  const settingInfo = (key) => byKey.get(key) || null;
+  const sectionOf = (key) => key.split(".")[0];
+  const isKnown = (entry) => {
+    const s = byKey.get(entry.key);
+    return !!s && s.type === entry.type;
+  };
+
+  /* The label of a name of an e or l setting, null if the page does not know it. */
+  function nameLabel(key, name) {
+    if (NAMES[key] && own(NAMES[key], name)) return NAMES[key][name];
+    if (EFFECT_KEYS.includes(key) && own(EFFECTS, name)) return EFFECTS[name][0];
+    return null;
+  }
+
+  function nameHelp(key, name) {
+    return EFFECT_KEYS.includes(key) && own(EFFECTS, name) ? EFFECTS[name][1] : null;
+  }
+
+  const visibleNames = (entry) => entry.a.filter((n) => nameLabel(entry.key, n) !== null);
+
+  /* A value as text: outputs, read-only settings. */
+  function displayValue(entry, v) {
+    if (v === undefined || v === null) return "";
+    const s = byKey.get(entry.key);
+    switch (entry.type) {
+      case "b":
+        return v ? "On" : "Off";
+      case "c":
+        return C.formatColor(v);
+      case "e":
+        return nameLabel(entry.key, v) || v;
+      case "l":
+        return v.length ? v.map((n) => nameLabel(entry.key, n) || n).join(", ") : "All effects";
+      default:
+        return s && s.show ? s.show(v) : String(v);
+    }
+  }
+
+  const hiddenNote = (n) => (n === 1 ? "1 setting needs a newer page." : n + " settings need a newer page.");
+
+  Object.assign(C, {
+    SECTIONS, SETTINGS, EFFECTS, OS_KEYS_WARNING, settingInfo, sectionOf, isKnown, nameLabel, nameHelp,
+    visibleNames, displayValue, hiddenNote,
+  });
+})();
+</script>
+<!-- Section: UI -->
+<script id="ui">
+"use strict";
+(() => {
+  const C = globalThis.RainyCore;
+  const $ = (id) => document.getElementById(id);
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const query = new URLSearchParams(location.search);
+  const demo = query.has("demo");
+  const hasSerial = "serial" in navigator;
+  const hasBle = "bluetooth" in navigator;
+  const POLL_MS = 1000;
+  const STATE = {
+    usb: "Connected over USB",
+    ble: "Connected over Bluetooth",
+    demo: "Demo: a simulated keyboard",
+  };
+
+  let conn = null; /* {kind, transport, client, model, rows, throttleMs} */
+  let busy = false; /* connecting */
+  let blePicker = false; /* the remembered keyboard did not answer: use the picker */
+  let again = false; /* a port appeared while busy or connected: look again */
+
+  /* h("p", {class: "help", onclick: fn}, "text", child) -> element */
+  function h(tag, attrs, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v === false || v === null || v === undefined) continue;
+      if (k === "class") el.className = v;
+      else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+      else el.setAttribute(k, v === true ? "" : String(v));
+    }
+    for (const kid of kids) if (kid !== null && kid !== undefined) el.append(kid);
+    return el;
+  }
+
+  function setState(text) {
+    $("state").textContent = text;
+  }
+
+  function say(text, kind = "error") {
+    const m = $("msg");
+    m.textContent = text || "";
+    m.className = "msg " + kind;
+    m.hidden = !text;
+  }
+
+  function buttons() {
+    const on = conn !== null;
+    $("btn-usb").hidden = on;
+    $("btn-ble").hidden = on;
+    $("btn-disconnect").hidden = !on || conn.kind === "demo";
+    $("btn-usb").disabled = busy || !hasSerial;
+    $("btn-ble").disabled = busy || !hasBle;
+  }
+
+  function showSettings(on) {
+    $("settings").hidden = !on;
+    $("intro").hidden = on;
+  }
+
+  function firmwareText(fw) {
+    if (!fw) return "";
+    return "Firmware " + fw.version + (fw.confirmed ? "" : ", test image (not confirmed)");
+  }
+
+  /* ---- connection ---- */
+
+  async function attach(kind, transport, client) {
+    const model = new C.ConfigModel(client, C.isKnown);
+    const me = { kind, transport, client, model, rows: new Map(), throttleMs: kind === "ble" ? 150 : 50 };
+    conn = me;
+    again = false;
+    buttons();
+    client.onClose = () => lost(me);
+    model.on((ev) => modelEvent(me, ev));
+    setState(STATE[kind] + ", reading the settings");
+    try {
+      await model.load();
+    } catch (e) {
+      if (conn !== me) return;
+      if (e instanceof C.TransportError) return lost(me);
+      say(C.errorText(e));
+      return drop(me, "Not connected");
+    }
+    if (conn !== me) return;
+    setState(STATE[kind]);
+    say("");
+    const f = document.activeElement;
+    if (!f || f === document.body || f.closest("[hidden]")) $("main").focus({ preventScroll: true });
+    $("fw").textContent = firmwareText(model.firmware);
+    pollLoop(me);
+  }
+
+  function drop(me, state) {
+    if (conn !== me) return;
+    const f = document.activeElement;
+    conn = null;
+    me.client.close();
+    me.transport.close();
+    showSettings(false);
+    $("fw").textContent = "";
+    setState(state);
+    buttons();
+    if (!f || f === document.body || f.closest("#main, #btn-disconnect")) {
+      $((me.kind === "ble" && hasBle) || !hasSerial ? "btn-ble" : "btn-usb").focus();
+    }
+  }
+
+  function lost(me) {
+    if (conn !== me) return;
+    drop(me, "Connection lost");
+    say("Connection lost. Connect again.");
+    /* a replug seen before the loss was noticed */
+    if (again) autoConnect(false, "Connection lost");
+  }
+
+  async function pollLoop(me) {
+    while (conn === me) {
+      await sleep(POLL_MS);
+      if (conn !== me || document.hidden) continue;
+      try {
+        await me.model.poll();
+      } catch (e) {
+        if (e instanceof C.TransportError) return lost(me);
+        say(C.errorText(e));
+      }
+    }
+  }
+
+  /* kb.os_keys changes with ZMK Studio edits, which do not change rev. */
+  function recheck() {
+    const me = conn;
+    if (!me || document.hidden || !me.model.info) return;
+    me.model.refresh(["kb.os_keys"]).catch((e) => {
+      if (e instanceof C.TransportError) lost(me);
+    });
+  }
+
+  async function connectUsb() {
+    if (busy || conn) return;
+    busy = true;
+    buttons();
+    say("");
+    let found = null;
+    try {
+      for (let round = 0; round < 3 && !found; round++) {
+        let port;
+        try {
+          port = await C.pickPort(navigator.serial);
+        } catch (e) {
+          if (e.name === "NotFoundError") break; /* the picker was closed */
+          if (e.name === "SecurityError") {
+            say("Click Connect USB again and choose the other Rainy 75 port.", "info");
+            break;
+          }
+          throw e;
+        }
+        setState("Checking the port");
+        const r = await C.probeSerial(port);
+        if (r.ok) found = r;
+        else if (r.reason === "open") {
+          say(C.portBusyText(r.error));
+          break;
+        } else say("This is the ZMK Studio port. Choose the other Rainy 75 port (the console).", "info");
+      }
+    } catch (e) {
+      say(C.errorText(e));
+    }
+    busy = false;
+    if (found) return attach("usb", found.transport, found.client);
+    setState("Not connected");
+    buttons();
+    if (again) autoConnect(false);
+  }
+
+  async function connectBle() {
+    if (busy || conn) return;
+    busy = true;
+    buttons();
+    say("");
+    let found = null;
+    try {
+      const known = blePicker ? null : await C.rememberedDevice(navigator.bluetooth).catch(() => null);
+      if (known) {
+        setState("Connecting over Bluetooth");
+        try {
+          found = await C.openBle(known);
+        } catch (e) {
+          if (e instanceof C.NotBondedError) throw e;
+          blePicker = true;
+          say("The keyboard did not answer over Bluetooth. Click Connect Bluetooth again to choose it from the list.", "info");
+        }
+      } else {
+        let device = null;
+        try {
+          device = await C.pickDevice(navigator.bluetooth);
+        } catch (e) {
+          /* NotFoundError: the picker was closed, or no adapter */
+          if (e.name !== "NotFoundError" || /adapter/i.test(e.message)) throw e;
+        }
+        if (device) {
+          setState("Connecting over Bluetooth");
+          found = await C.openBle(device);
+          blePicker = false;
+        }
+      }
+    } catch (e) {
+      say(C.errorText(e));
+    }
+    busy = false;
+    if (found) return attach("ble", found.transport, found.client);
+    setState("Not connected");
+    buttons();
+    if (again) autoConnect(false);
+  }
+
+  /* Page load: a port or keyboard granted on an earlier visit, no picker.
+   * Later (useBle false) a port that appeared: it is looked at several times,
+   * as the console may not answer right after the replug. idle: the state if
+   * nothing is found. */
+  async function autoConnect(useBle, idle = "Not connected") {
+    busy = true;
+    again = false;
+    buttons();
+    let found = null;
+    let kind = "usb";
+    if (hasSerial) {
+      setState("Looking for the keyboard");
+      found = await C.findGrantedPort(navigator.serial, C.PROBE_MS, useBle ? [0] : C.REPLUG_WAITS).catch(() => null);
+    }
+    if (!found && useBle && hasBle) {
+      const device = await C.rememberedDevice(navigator.bluetooth).catch(() => null);
+      if (device) {
+        setState("Connecting over Bluetooth");
+        kind = "ble";
+        found = await C.openBle(device, 10000).catch(() => null);
+      }
+    }
+    busy = false;
+    if (found && !conn) return attach(kind, found.transport, found.client);
+    if (!conn) setState(idle);
+    buttons();
+    if (again && !conn) return autoConnect(false);
+  }
+
+  function startDemo() {
+    const sim = new C.SimKeyboard(C.demoOptions(query.get("demo")));
+    const transport = new C.SimTransport(sim, { latencyMs: 15 });
+    const client = new C.SmpClient(transport, { timeoutMs: 2000, retries: 1 });
+    $("demo").hidden = false;
+    /* send: for the tests, to see what send() returns. */
+    window.RainyDemo = { sim, transport, send: (key, value) => send(conn, key, value),
+      ready: attach("demo", transport, client) };
+  }
+
+  /* ---- settings ---- */
+
+  function modelEvent(me, ev) {
+    if (conn !== me) return;
+    if (ev.type === "loaded") render(me);
+    else if (ev.type === "values") refresh(me, ev.keys);
+  }
+
+  function render(me) {
+    me.rows.clear();
+    for (const s of C.SECTIONS) $("rows-" + s.id).replaceChildren();
+    for (const info of C.SETTINGS) {
+      const entry = me.model.entries.get(info.key);
+      if (!entry || !C.isKnown(entry)) continue;
+      const row = makeRow(me, entry, info);
+      $("rows-" + C.sectionOf(info.key)).append(row.el);
+      me.rows.set(info.key, row);
+      row.update(me.model.values.get(info.key));
+    }
+    for (const s of C.SECTIONS) $("sec-" + s.id).hidden = !$("rows-" + s.id).children.length;
+    const n = me.model.hiddenCount();
+    $("hidden-note").textContent = n ? C.hiddenNote(n) : "";
+    $("hidden-note").hidden = !n;
+    showSettings(true);
+  }
+
+  function refresh(me, keys) {
+    for (const [key, row] of me.rows) {
+      if (keys && !keys.includes(key)) continue;
+      if (!row.busy()) row.update(me.model.values.get(key));
+    }
+  }
+
+  function makeRow(me, entry, info) {
+    const id = "set-" + entry.key.replace(/[^a-z0-9]+/gi, "-");
+    const helpId = id + "-help";
+    const w = widgetFor(me, entry, info, id, helpId);
+    const el = h("div", { class: "row", "data-key": entry.key }, w.label, w.control,
+      h("p", { class: "help", id: helpId }, info.help), w.extra || null);
+    return { el, update: w.update, busy: w.busy || (() => false) };
+  }
+
+  /* -> true when the keyboard stored the value, false after an error (shown,
+   * or the connection dropped): the slider throttle counts a false as not sent. */
+  async function send(me, key, value) {
+    if (conn !== me) return false;
+    try {
+      await me.model.set(key, value);
+      say("");
+      return true;
+    } catch (e) {
+      if (e instanceof C.TransportError) lost(me);
+      else say(C.errorText(e));
+      return false;
+    }
+  }
+
+  /* A widget: {label, control, extra?, update(v), busy?()}. */
+  function widgetFor(me, entry, info, id, helpId) {
+    if (entry.ro) return textWidget(me, entry, info, id, helpId);
+    const make = { b: toggleWidget, e: selectWidget, u: sliderWidget, c: colorWidget, l: cycleWidget }[entry.type];
+    return (make || textWidget)(me, entry, info, id, helpId);
+  }
+
+  function textWidget(me, entry, info, id, helpId) {
+    const out = h("output", { id, "aria-describedby": helpId });
+    const warn = entry.key === "kb.os_keys" ? h("p", { class: "warn", hidden: true }, C.OS_KEYS_WARNING) : null;
+    return {
+      label: h("label", { for: id }, info.label),
+      control: h("span", { class: "control" }, out),
+      extra: warn,
+      update(v) {
+        out.textContent = C.displayValue(entry, v);
+        if (warn) warn.hidden = v !== 0;
+      },
+    };
+  }
+
+  function toggleWidget(me, entry, info, id, helpId) {
+    const input = h("input", { type: "checkbox", role: "switch", id, "aria-describedby": helpId });
+    input.addEventListener("change", () => send(me, entry.key, input.checked));
+    return {
+      label: h("label", { for: id }, info.label),
+      control: h("span", { class: "control" }, input),
+      update(v) {
+        input.checked = !!v;
+      },
+    };
+  }
+
+  function selectWidget(me, entry, info, id, helpId) {
+    const names = C.visibleNames(entry);
+    const fx = C.nameHelp(entry.key, names[0]) !== null;
+    const sel = h("select", { id, "aria-describedby": helpId + (fx ? " " + id + "-fx" : "") },
+      ...names.map((n) => h("option", { value: n }, C.nameLabel(entry.key, n))));
+    const other = h("option", { value: "", disabled: true }, "Other (needs a newer page)");
+    const about = fx ? h("p", { class: "help", id: id + "-fx" }) : null;
+    const describe = () => {
+      if (about) about.textContent = sel.value ? C.nameLabel(entry.key, sel.value) + ": " + C.nameHelp(entry.key, sel.value) : "";
+    };
+    sel.addEventListener("change", () => {
+      describe();
+      if (sel.value) send(me, entry.key, sel.value);
+    });
+    return {
+      label: h("label", { for: id }, info.label),
+      control: h("span", { class: "control" }, sel),
+      extra: about,
+      update(v) {
+        if (names.includes(v)) {
+          other.remove();
+          sel.value = v;
+        } else {
+          sel.append(other);
+          sel.value = "";
+        }
+        describe();
+      },
+    };
+  }
+
+  /* The throttle of a slider or a colour picker: at most one send per
+   * throttleMs (50 ms USB, 150 ms Bluetooth), the newest value, and the
+   * send() result goes back to the throttle, so a refused or lost value is
+   * sent again on the next release. When nothing is held and nothing is
+   * pending, settle() shows what the keyboard stored (the echo, or its old
+   * value after a refusal). held(): the user has hold of the control. */
+  function throttled(me, entry, held, update) {
+    const busy = () => held() || th.pending();
+    function settle() {
+      const v = me.model.values.get(entry.key);
+      if (!busy() && v !== undefined) update(v);
+    }
+    const th = C.makeThrottle(me.throttleMs, async (v) => {
+      const ok = await send(me, entry.key, v);
+      setTimeout(settle, 0);
+      return ok;
+    });
+    return { th, busy, settle };
+  }
+
+  /* Slider: sends while it moves, throttled, and the final value on release
+   * (change). While it is held or a send is open, values read from the
+   * keyboard do not move it. */
+  function sliderWidget(me, entry, info, id, helpId) {
+    const input = h("input", { type: "range", id, min: entry.a, max: entry.b, step: 1, "aria-describedby": helpId });
+    const out = h("output", { for: id, "aria-hidden": "true" });
+    let held = false;
+    const { th, busy, settle } = throttled(me, entry, () => held, update);
+    function show(v) {
+      out.textContent = C.displayValue(entry, v);
+      input.setAttribute("aria-valuetext", out.textContent);
+    }
+    function update(v) {
+      input.value = v;
+      show(v);
+    }
+    input.addEventListener("pointerdown", () => {
+      held = true;
+    });
+    const release = () => setTimeout(() => {
+      held = false;
+      settle();
+    }, 0);
+    input.addEventListener("pointerup", release);
+    input.addEventListener("pointercancel", release);
+    input.addEventListener("input", () => {
+      show(Number(input.value));
+      th.push(Number(input.value));
+    });
+    input.addEventListener("change", () => {
+      held = false;
+      th.flush(Number(input.value));
+    });
+    return {
+      label: h("label", { for: id }, info.label),
+      control: h("span", { class: "control" }, input, out),
+      update,
+      busy,
+    };
+  }
+
+  /* Colour picker: like the slider; Chrome fires input while the picker is
+   * open and change when it closes. */
+  function colorWidget(me, entry, info, id, helpId) {
+    const input = h("input", { type: "color", id, "aria-describedby": helpId });
+    const out = h("output", { for: id, "aria-hidden": "true" });
+    let open = false;
+    const { th, busy, settle } = throttled(me, entry, () => open, update);
+    function update(v) {
+      input.value = C.colorInput(v);
+      out.textContent = C.formatColor(v);
+    }
+    input.addEventListener("input", () => {
+      open = true;
+      out.textContent = C.formatColor(C.parseColor(input.value));
+      th.push(C.parseColor(input.value));
+    });
+    input.addEventListener("change", () => {
+      open = false;
+      th.flush(C.parseColor(input.value));
+      settle();
+    });
+    input.addEventListener("blur", () => {
+      open = false;
+      settle();
+    });
+    return {
+      label: h("label", { for: id }, info.label),
+      control: h("span", { class: "control" }, input, out),
+      update,
+      busy,
+    };
+  }
+
+  /* rgb.cycle: a checkbox per effect, in cycle order; drag a row, or use its
+   * Move up and Move down buttons, to move it. At least one effect stays
+   * ticked. Every change is sent at once. */
+  function cycleWidget(me, entry, info, id, helpId) {
+    const known = (n) => C.nameLabel(entry.key, n) !== null;
+    const list = h("ol", { class: "cycle", id, "aria-labelledby": id + "-label", "aria-describedby": helpId });
+    let rows = [];
+    let dragged = null;
+    let sending = 0; /* sends the keyboard has not answered yet */
+    let sent = null; /* the list sent last, while sends are open */
+
+    /* While a send is open the rows are not replaced by values read from the
+     * keyboard (busy), so quick clicks do not undo each other; when the last
+     * answer is in, the rows show what the keyboard stored. */
+    function commit() {
+      const stored = me.model.values.get(entry.key) || [];
+      const v = C.cycleFromRows(rows, stored, known);
+      if (C.sameValue(v, sending ? sent : stored)) return;
+      sent = v;
+      sending++;
+      send(me, entry.key, v).then(() => {
+        if (--sending === 0) settle();
+      });
+    }
+
+    function move(from, to) {
+      if (to < 0 || to >= rows.length || from === to) return false;
+      const [r] = rows.splice(from, 1);
+      rows.splice(to, 0, r);
+      commit();
+      return true;
+    }
+
+    function draw() {
+      const a = document.activeElement;
+      const focus = a && list.contains(a) ? [a.closest("li").dataset.name, a.dataset.part] : null;
+      const ticked = rows.filter((r) => r.checked).length;
+      list.replaceChildren(...rows.map((r, i) => {
+        const label = C.nameLabel(entry.key, r.name);
+        const cbId = id + "-" + r.name;
+        const cb = h("input", { type: "checkbox", id: cbId, "data-part": "cb", checked: r.checked,
+          disabled: r.checked && ticked === 1, "aria-describedby": cbId + "-help" });
+        cb.addEventListener("change", () => {
+          r.checked = cb.checked;
+          commit();
+          draw();
+        });
+        /* aria-disabled, not disabled, at the ends: the button keeps the focus, so more key presses do nothing */
+        const up = h("button", { type: "button", class: "mv", "data-part": "up", "aria-label": "Move " + label + " up",
+          "aria-disabled": i === 0 ? "true" : null }, String.fromCharCode(0x2191));
+        up.addEventListener("click", () => {
+          if (move(i, i - 1)) draw();
+        });
+        const down = h("button", { type: "button", class: "mv", "data-part": "down",
+          "aria-label": "Move " + label + " down", "aria-disabled": i === rows.length - 1 ? "true" : null },
+        String.fromCharCode(0x2193));
+        down.addEventListener("click", () => {
+          if (move(i, i + 1)) draw();
+        });
+        const li = h("li", { draggable: "true", "data-name": r.name },
+          h("span", { class: "grip", "aria-hidden": "true" }, String.fromCharCode(0x2261)), cb,
+          h("span", { class: "txt" }, h("label", { for: cbId }, label),
+            h("span", { class: "help", id: cbId + "-help" }, " " + C.nameHelp(entry.key, r.name))),
+          up, down);
+        li.addEventListener("dragstart", (e) => {
+          dragged = i;
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", r.name);
+        });
+        li.addEventListener("dragover", (e) => {
+          if (dragged !== null) e.preventDefault();
+        });
+        li.addEventListener("drop", (e) => {
+          e.preventDefault();
+          const from = dragged;
+          dragged = null;
+          if (from !== null) move(from, i);
+          draw();
+        });
+        li.addEventListener("dragend", () => {
+          dragged = null;
+          if (stale()) settle();
+        });
+        return li;
+      }));
+      if (focus) { /* the same control; Move up if it is the disabled checkbox of the only ticked row */
+        const li = list.querySelector(`li[data-name="${focus[0]}"]`);
+        const el = li && [focus[1], "up"].map((p) => li.querySelector(`[data-part="${p}"]`))
+          .find((x) => x && !x.disabled);
+        if (el) el.focus();
+      }
+    }
+
+    function update(v) {
+      rows = C.cycleRows(entry.a, v, known);
+      draw();
+    }
+
+    const busy = () => dragged !== null || sending > 0;
+
+    function settle() {
+      const v = me.model.values.get(entry.key);
+      if (!busy() && v !== undefined) update(v);
+    }
+
+    /* The rows differ from what the keyboard has: an update came while the
+     * widget was busy. (Moving an unticked row changes no value: it stays.) */
+    function stale() {
+      const v = me.model.values.get(entry.key);
+      return v !== undefined && !C.sameValue(C.cycleFromRows(rows, v, known), v);
+    }
+
+    return {
+      label: h("span", { class: "label", id: id + "-label" }, info.label),
+      control: null,
+      extra: list,
+      update,
+      busy,
+    };
+  }
+
+  async function resetAll() {
+    const me = conn;
+    if (!me || !window.confirm("Reset all settings to their defaults?")) return;
+    try {
+      await me.model.reset();
+      say("All settings are back to their defaults.", "info");
+    } catch (e) {
+      if (e instanceof C.TransportError) return lost(me);
+      say(C.errorText(e));
+    }
+  }
+
+  // end of widgets
+
+  function init() {
+    $("btn-usb").addEventListener("click", connectUsb);
+    $("btn-ble").addEventListener("click", connectBle);
+    $("btn-disconnect").addEventListener("click", () => {
+      if (conn) drop(conn, "Not connected");
+    });
+    window.addEventListener("focus", recheck);
+    document.addEventListener("visibilitychange", recheck);
+    $("demo-fn-enter").addEventListener("click", () => window.RainyDemo.sim.pressFnEnter());
+    $("demo-os-keys").addEventListener("click", () => {
+      const sim = window.RainyDemo.sim;
+      sim.setOsKeys(sim.values["kb.os_keys"] ? 0 : 2);
+    });
+    $("btn-reset").addEventListener("click", resetAll);
+    // end of wiring
+    $("note-usb").hidden = hasSerial || !hasBle;
+    $("note-ble").hidden = hasBle || !hasSerial;
+    if (demo) return startDemo();
+    if (!hasSerial && !hasBle) {
+      $("unsupported").hidden = false;
+      $("intro").hidden = true;
+      $("conn").hidden = true;
+      setState("This browser cannot connect to the keyboard");
+      return;
+    }
+    if (hasSerial) {
+      navigator.serial.addEventListener("connect", () => {
+        if (busy || conn) again = true;
+        else autoConnect(false);
+      });
+    }
+    autoConnect(true);
+  }
+
+  init();
+})();
+</script>
+<!-- end of sections -->
+</body>
+</html>

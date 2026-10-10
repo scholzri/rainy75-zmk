@@ -11,6 +11,11 @@ source via the documented methods in
 [docs/zmk-firmware.md](docs/zmk-firmware.md) (OTA bridge → mcumgr DFU, or SWS
 with a hardware debugger).
 
+The one official web page is the settings page at
+**[scholzri.github.io/rainy75-zmk/config/](https://scholzri.github.io/rainy75-zmk/config/)**,
+also attached to each release as `rainy75-config.html` ([docs/config.md](docs/config.md)).
+It changes settings on a connected keyboard and never offers a download.
+
 ## Impersonation / fake "firmware download" sites
 
 Scam accounts copy this repository and publish GitHub Pages sites with a fake
@@ -23,7 +28,11 @@ How to recognize a fake:
 - It describes a "hold Escape, drag a `.uf2` onto the `RAINY75` USB drive" flow —
   the Wobkey Rainy 75 has **no UF2 / mass-storage bootloader**; that procedure
   is physically impossible on this hardware.
-- It is not hosted under `github.com/scholzri`.
+- It is not hosted under `github.com/scholzri` (the settings page: under
+  `scholzri.github.io/rainy75-zmk/config/`). Check the host name exactly: the address
+  starts with `https://github.com/scholzri/` or `https://scholzri.github.io/`, with no other
+  letters around `scholzri` and nothing between `github.io` and the next `/`; look-alikes
+  (`scholzri-zmk.github.io`, `scholzri.github.io.example.com`, another user name) are fakes.
 
 ### Known instances
 

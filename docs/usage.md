@@ -23,11 +23,13 @@ combos below.
 | **Fn + ← / →** | RGB: speed down/up |
 | **Fn + B** | Battery gauge (~3 s bar on the number row) |
 
-Full RGB details: [rainy-rgb.md](rainy-rgb.md).
+Full RGB details: [rainy-rgb.md](rainy-rgb.md). Every setting (lighting, indicators, Win or
+Mac): [config.md](config.md).
 
 ## Windows and Mac
 
-The left **Win** and **Alt** keys follow two settings. Change them over USB with
+The left **Win** and **Alt** keys follow two settings. Change them on the
+[config page](config.md) (section Keyboard), or over USB with
 `python3 reverse/tools/rainy75_cfg.py set KEY VALUE` (for Bluetooth put `--ble` before
 `set`), for example `set kb.os mac`:
 
@@ -46,10 +48,10 @@ is released correctly. The settings are stored and survive a restart.
 Both keys use the **OS Key** behavior (`&os_key`). ZMK Studio shows it with the choices
 "Win (Option on a Mac)" and "Alt (Command on a Mac)". A key you bind to something else in
 Studio no longer follows the settings; `python3 reverse/tools/rainy75_cfg.py get kb.os_keys`
-shows how many keys use the OS Key behavior (2 with the default keymap). To get the behavior
-back on a key you rebound, choose "OS Key" for it again in Studio and save; "Restore Stock
-Settings" in Studio restores both keys too, but it also drops every other edit you saved in
-Studio.
+shows how many keys use the OS Key behavior (2 with the default keymap; the config page shows
+the number and warns at 0). To get the behavior back on a key you rebound, choose "OS Key"
+for it again in Studio and save; "Restore Stock Settings" in Studio restores both keys too,
+but it also drops every other edit you saved in Studio.
 
 ## Bluetooth and USB
 
