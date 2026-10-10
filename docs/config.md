@@ -132,11 +132,10 @@ The page needs no internet. Save `rainy75-config.html` from a release (or use
   ```
 
   and open `http://localhost:8000/config/` (or `http://localhost:8000/rainy75-config.html`),
-- or open the file directly. Chrome treats a file opened from disk as a secure page too, so
-  the page loads and shows the Connect buttons (Web Serial is available there). That the
-  port and device lists open from a file, and that a port or keyboard you allowed before is
-  picked up again without the list, has not been confirmed with a real keyboard yet; if
-  they do not work, use the local server above.
+- or open the file directly. Chrome treats a file opened from disk as a secure page too:
+  the port and device lists open, and a port or keyboard you allowed before is picked up
+  again after a reload without the list (tested with Chromium 154 on Linux over USB and
+  Bluetooth). If your browser behaves differently, use the local server above.
 
 The demo works offline too (`index.html?demo`).
 

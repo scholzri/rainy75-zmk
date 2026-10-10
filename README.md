@@ -79,7 +79,7 @@ read on their own.
   WS2812 LEDs: 11 animated effects, reactive ripple/heatmap, an opt-in walker diagnostic, FPS-independent speed, and
   *functional* indicators (CapsLock, Fn-layer highlight, battery gauge) — see
   [docs/rainy-rgb.md](docs/rainy-rgb.md).
-- **Settings without reflashing**: lighting, indicators and the Win or Mac key layout from a
+- **Settings without reflashing**: lighting, indicators, the Win or Mac key layout and the sleep time from a
   [web page](https://scholzri.github.io/rainy75-zmk/config/) or the command line, over USB or
   Bluetooth ([docs/config.md](docs/config.md)).
 - **No debugger needed to install** — once you've built the images, a two-stage OTA →
@@ -129,7 +129,7 @@ read on their own.
 | **Install this ZMK firmware** | `./install_zmk.sh` — two-stage OTA → mcumgr, no debugger. Full guide: [INSTALL.md](INSTALL.md). |
 | **Use it — controls, Bluetooth, Studio** | [docs/usage.md](docs/usage.md) — Fn-layer, BT profiles + reset, live keymap editing via ZMK Studio. |
 | **Go back to stock** | `./restore_stock.sh` — see [INSTALL.md](INSTALL.md#3-go-back-to-stock). |
-| **Change lighting and keyboard settings** | The [config page](https://scholzri.github.io/rainy75-zmk/config/) (Chrome or Edge, over USB or Bluetooth) or `rainy75_cfg.py`: [docs/config.md](docs/config.md). |
+| **Change lighting and keyboard settings** | The [config page](https://scholzri.github.io/rainy75-zmk/config/) (Chrome or Edge, over USB or Bluetooth) or `rainy75_cfg.py`: [docs/config.md](docs/config.md). To run the page yourself, offline or from your clone: [docs/config.md#offline](docs/config.md#offline); try it without a keyboard with [`?demo`](https://scholzri.github.io/rainy75-zmk/config/?demo). |
 | **Build from source** | `./build.sh -a --iso` (or `--ansi`; Zephyr SDK 0.17.0 + west). See [INSTALL.md](INSTALL.md#4-build-from-source). |
 | **Recover a bricked board** | Telink burning board over the SWS pads — [docs/recovery.md](docs/recovery.md). |
 | **Open the case / service the battery** | Photo teardown walkthrough — [docs/teardown.md](docs/teardown.md). |
