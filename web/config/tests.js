@@ -829,6 +829,134 @@
     t.ok(!new C.SimKeyboard(C.demoOptions("test")).confirmed);
   });
 
+  // ---- Task 7: the config model ----
+
+  /* A model on a SimKeyboard: {sim, tr, client, model, events}. */
+  function simModel(C, simOpts, known) {
+    const sim = new C.SimKeyboard(simOpts);
+    const tr = new C.SimTransport(sim, { latencyMs: 0 });
+    const client = new C.SmpClient(tr, { timeoutMs: 50 });
+    const model = new C.ConfigModel(client, known);
+    const events = [];
+    model.on((ev) => events.push(ev));
+    return { sim, tr, client, model, events };
+  }
+  const cmds = (sim) => sim.requests.map((r) => r.group + "/" + r.cmd);
+
+  test("model: load reads info, every list and get page, the firmware", async (C) => {
+    const m = simModel(C, { budget: 40 });
+    await m.model.load();
+    t.eq(m.model.entries.size, 21);
+    t.eq(m.model.values.size, 21);
+    t.eq(m.model.entries.get("rgb.val"), { key: "rgb.val", type: "u", a: 16, b: 255, ro: false });
+    t.eq(m.model.entries.get("kb.os_keys").ro, true);
+    t.eq(m.model.values.get("rgb.cycle"), C.SIM_EFFECTS);
+    t.eq(m.model.firmware, { version: "0.4.0", confirmed: true });
+    t.eq(m.model.info.fx, C.SIM_EFFECTS);
+    const list = m.sim.requests.filter((r) => r.cmd === 1 && r.group === 67);
+    t.ok(list.length > 5, "budget 40: many list pages");
+    t.eq(m.events.map((e) => e.type), ["loaded"]);
+    t.eq(cmds(m.sim)[0], "67/0");
+    t.eq(cmds(m.sim).slice(-1), ["1/0"]);
+  });
+
+  test("model: settings the page cannot show are counted", async (C) => {
+    const m = simModel(C, C.demoOptions("future"), (e) => e.key !== "rgb.future");
+    await m.model.load();
+    t.eq(m.model.hiddenCount(), 1);
+  });
+
+  test("model: a firmware without group 67", async (C) => {
+    const m = simModel(C, { noConfig: true });
+    const e = await t.rejects(m.model.load(), /no runtime settings/);
+    t.ok(e instanceof C.NoSettingsError);
+    t.ok(/rc 8/.test(C.errorText(new C.DeviceError(8))) && /not supported/.test(C.errorText(new C.DeviceError(8))));
+    t.eq(C.errorText(new C.DeviceError(11)), "The keyboard refused: read-only setting (rc 11).");
+  });
+
+  test("model: an unconfirmed test image", async (C) => {
+    const m = simModel(C, { confirmed: false });
+    await m.model.load();
+    t.eq(m.model.firmware.confirmed, false);
+  });
+
+  test("model: poll re-reads the values only when rev changed", async (C) => {
+    const m = simModel(C);
+    await m.model.load();
+    const before = m.sim.requests.length;
+    await m.model.poll();
+    t.eq(cmds(m.sim).slice(before), ["67/0"], "rev unchanged: info only");
+    m.sim.pressFnEnter();
+    m.events.length = 0;
+    await m.model.poll();
+    t.eq(m.model.values.get("rgb.effect"), "rainbow");
+    t.eq(m.events, [{ type: "values" }]);
+  });
+
+  test("model: kb.os_keys is re-read without a rev change", async (C) => {
+    const m = simModel(C);
+    await m.model.load();
+    m.sim.setOsKeys(0);
+    for (let i = 1; i < C.OS_KEYS_EVERY; i++) await m.model.poll();
+    t.eq(m.model.values.get("kb.os_keys"), 2, "not yet");
+    await m.model.poll();
+    t.eq(m.model.values.get("kb.os_keys"), 0, "every OS_KEYS_EVERY polls");
+    m.sim.setOsKeys(2);
+    await m.model.refresh(["kb.os_keys", "x.not_listed"]);
+    t.eq(m.model.values.get("kb.os_keys"), 2, "at once on refresh");
+    t.eq(m.sim.requests.slice(-1)[0].body, { k: ["kb.os_keys"], i: 0 });
+  });
+
+  test("model: set keeps the echo", async (C) => {
+    const m = simModel(C);
+    await m.model.load();
+    t.eq(await m.model.set("rgb.cycle", ["plasma", "solid"]), ["plasma", "solid"]);
+    t.eq(m.model.values.get("rgb.cycle"), ["plasma", "solid"]);
+    t.eq(m.sim.values["rgb.cycle"], ["plasma", "solid"]);
+    t.eq(m.events.slice(-1), [{ type: "values", keys: ["rgb.cycle"] }]);
+    t.eq(m.sim.requests.slice(-1)[0], { op: 2, group: 67, cmd: 3, body: { k: "rgb.cycle", v: ["plasma", "solid"] } });
+  });
+
+  test("model: a refused set re-reads the value", async (C) => {
+    const m = simModel(C);
+    await m.model.load();
+    m.sim.values["rgb.val"] = 99;
+    m.sim.failNextSet = 3;
+    const e = await t.rejects(m.model.set("rgb.val", 120), /rc 3/);
+    t.ok(e instanceof C.DeviceError);
+    t.eq(m.model.values.get("rgb.val"), 99, "what the keyboard has");
+    t.eq(m.sim.requests.slice(-1)[0].body, { k: ["rgb.val"], i: 0 });
+  });
+
+  test("model: invalid values are not sent", async (C) => {
+    const m = simModel(C);
+    await m.model.load();
+    const n = m.sim.requests.length;
+    await t.rejects(m.model.set("rgb.val", 999), /outside 16\.\.255/);
+    await t.rejects(m.model.set("x.nope", 1), /unknown setting/);
+    t.eq(m.sim.requests.length, n);
+  });
+
+  test("model: reset all and reset keys", async (C) => {
+    const m = simModel(C);
+    await m.model.load();
+    await m.model.set("rgb.val", 50);
+    await m.model.set("kb.os", "mac");
+    await m.model.reset(["kb.os"]);
+    t.eq([m.model.values.get("rgb.val"), m.model.values.get("kb.os")], [50, "win"]);
+    await m.model.reset();
+    t.eq(m.model.values.get("rgb.val"), 200);
+    t.eq(m.events.slice(-1), [{ type: "values" }]);
+  });
+
+  test("model: no answer is a TransportError", async (C) => {
+    const m = simModel(C);
+    await m.model.load();
+    m.tr.drop = 2;
+    const e = await t.rejects(m.model.poll(), /no answer/);
+    t.ok(e instanceof C.TransportError);
+  });
+
   // end of tests
 
   async function runOne(fn, C, env) {

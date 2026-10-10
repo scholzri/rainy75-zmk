@@ -682,6 +682,176 @@ body {
     LIST_MAX, checkValue, parseColor, formatColor, colorInput, formatValue, sameValue,
     cycleRows, cycleFromRows, makeThrottle,
   });
+
+  /* The keyboard's settings as the page sees them (docs/config-protocol.md):
+   * load() reads info, then list and get page by page and the firmware
+   * version; poll() (every second) reads info and re-reads all values when
+   * rev changed (rev is only compared for inequality), kb.os_keys every
+   * OS_KEYS_EVERY polls as well (a ZMK Studio keymap edit changes it without
+   * changing rev); set() keeps the value the keyboard echoes. Listeners get
+   * {type: "loaded"} (entries changed: render again) and {type: "values",
+   * keys} (keys undefined: all). known(entry) tells which settings the page
+   * can show; the others are counted by hiddenCount(). */
+  const CMD = { INFO: 0, LIST: 1, GET: 2, SET: 3, RESET: 4 };
+  const OS_KEYS_EVERY = 5;
+  const PAGES_MAX = 64;
+  /* The same wording as RC_TEXT in reverse/tools/rainy75_cfg.py. */
+  const RC_TEXT = { 3: "invalid value", 5: "unknown setting", 7: "reply too large",
+    8: "not supported: this firmware has no runtime settings (mcumgr group 67), update it",
+    11: "read-only setting" };
+  const NO_SETTINGS = "This firmware has no runtime settings (mcumgr group 67, new in v0.4.0). " +
+    "Update the keyboard's firmware, then connect again.";
+
+  class NoSettingsError extends Error {
+    constructor() {
+      super(NO_SETTINGS);
+      this.name = "NoSettingsError";
+    }
+  }
+
+  function errorText(e) {
+    if (e instanceof C.DeviceError) return `The keyboard refused: ${RC_TEXT[e.rc] || "error"} (rc ${e.rc}).`;
+    if (e instanceof C.TransportError) return "Connection lost: " + e.message + ".";
+    return (e && e.message) || String(e);
+  }
+
+  class ConfigModel {
+    constructor(client, known) {
+      this.client = client;
+      this.known = known || (() => true);
+      this.info = null;
+      this.entries = new Map();
+      this.values = new Map();
+      this.firmware = null;
+      this.polls = 0;
+      this.listeners = [];
+    }
+
+    on(fn) {
+      this.listeners.push(fn);
+    }
+
+    _emit(ev) {
+      for (const fn of this.listeners) fn(ev);
+    }
+
+    _cfg(op, cmd, body) {
+      return this.client.request(op, C.SMP.GROUP_CFG, cmd, body);
+    }
+
+    async load() {
+      let info;
+      try {
+        info = await this._cfg(C.SMP.READ, CMD.INFO, {});
+      } catch (e) {
+        if (e instanceof C.DeviceError && e.rc === 8) throw new NoSettingsError();
+        throw e;
+      }
+      this.info = { v: info.v, n: info.n, fx: info.fx || [], rev: info.rev };
+      await this._readList();
+      this.values = new Map(Object.entries(await this._read()));
+      this.firmware = await this._firmware();
+      this._emit({ type: "loaded" });
+    }
+
+    async _readList() {
+      const entries = new Map();
+      let i = 0;
+      for (let page = 0; page < PAGES_MAX; page++) {
+        const r = await this._cfg(C.SMP.READ, CMD.LIST, { i });
+        for (const s of r.s || []) entries.set(s[0], { key: s[0], type: s[1], a: s[2], b: s[3], ro: !!(s[4] & 1) });
+        if (typeof r.next !== "number" || r.next <= i) break;
+        i = r.next;
+      }
+      this.entries = entries;
+    }
+
+    /* All values, or those of keys; follows next page by page. */
+    async _read(keys) {
+      const out = {};
+      let i = 0;
+      for (let page = 0; page < PAGES_MAX; page++) {
+        const r = await this._cfg(C.SMP.READ, CMD.GET, keys ? { k: keys, i } : { i });
+        Object.assign(out, r.v || {});
+        if (typeof r.next !== "number" || r.next <= i) break;
+        i = r.next;
+      }
+      return out;
+    }
+
+    /* The running image from the image list (group 1); null if unknown. */
+    async _firmware() {
+      try {
+        const r = await this.client.request(C.SMP.READ, C.SMP.GROUP_IMG, 0, {});
+        const images = r.images || [];
+        const img = images.find((x) => x.active) || images.find((x) => x.slot === 0);
+        return img ? { version: String(img.version || "?"), confirmed: !!img.confirmed } : null;
+      } catch (e) {
+        if (e instanceof C.TransportError) throw e;
+        return null;
+      }
+    }
+
+    hiddenCount() {
+      let n = 0;
+      for (const e of this.entries.values()) if (!this.known(e)) n++;
+      return n;
+    }
+
+    async poll() {
+      const info = await this._cfg(C.SMP.READ, CMD.INFO, {});
+      this.polls++;
+      if (info.n !== this.info.n || !C.sameValue(info.fx || [], this.info.fx)) {
+        await this.load();
+        return;
+      }
+      if (info.rev !== this.info.rev) {
+        this.info.rev = info.rev;
+        this.values = new Map(Object.entries(await this._read()));
+        this._emit({ type: "values" });
+      } else if (this.polls % OS_KEYS_EVERY === 0) {
+        await this.refresh(["kb.os_keys"]);
+      }
+    }
+
+    /* Re-read some values (keys the keyboard does not list are skipped). */
+    async refresh(keys) {
+      const present = keys.filter((k) => this.entries.has(k));
+      if (!present.length) return;
+      const v = await this._read(present);
+      for (const k of Object.keys(v)) this.values.set(k, v[k]);
+      this._emit({ type: "values", keys: present });
+    }
+
+    /* -> the value as stored. A refusal (DeviceError) re-reads the value
+     * before it is thrown on, so the page shows what the keyboard has. */
+    async set(key, value) {
+      const entry = this.entries.get(key);
+      if (!entry) throw new Error("unknown setting " + key);
+      const v = C.checkValue(entry, value);
+      try {
+        const r = await this._cfg(C.SMP.WRITE, CMD.SET, { k: key, v });
+        this.values.set(key, r.v);
+        this._emit({ type: "values", keys: [key] });
+        return r.v;
+      } catch (e) {
+        if (e instanceof C.DeviceError) await this.refresh([key]).catch(() => {});
+        throw e;
+      }
+    }
+
+    /* Back to the defaults: keys, or every writable setting. */
+    async reset(keys) {
+      try {
+        await this._cfg(C.SMP.WRITE, CMD.RESET, keys ? { k: keys } : {});
+      } finally {
+        this.values = new Map(Object.entries(await this._read()));
+        this._emit({ type: "values" });
+      }
+    }
+  }
+
+  Object.assign(C, { CMD, OS_KEYS_EVERY, RC_TEXT, NO_SETTINGS, NoSettingsError, errorText, ConfigModel });
   // end of config model
 })();
 </script>
