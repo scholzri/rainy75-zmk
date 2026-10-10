@@ -1022,6 +1022,7 @@ static void test_passkey_guide_off(void) {
 	/* Enter: no chase on 1..6, the slot blinks (slot status) */
 	rrgb_ble_event(RRGB_BLE_EV_PASSKEY_SUBMITTED, 1, 6, t0 + 20);
 	CHECK(rrgb_ble_active(t0 + 20));
+	CHECK(rrgb_ble_suppress_effect(t0 + 20));   /* the effect stays off while it blinks */
 	CHECK(slot_blinks(1, t0 + 20));
 	for (int k = 0; k < RRGB_BLE_PASSKEY_LEN; k++) { CHECK(eq(px[NUM(k)], SENT)); }
 

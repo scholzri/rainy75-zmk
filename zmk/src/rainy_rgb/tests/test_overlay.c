@@ -356,6 +356,27 @@ static void test_caps_tint(void) {
     rrgb_overlay_set_caps(false);
 }
 
+/* ind.fn_highlight off in a BLE build: holding Fn leaves the lighting as it
+ * is, but F1..F4 still show the BLE slots and the output. */
+static void test_fn_highlight_off_ble(void) {
+    struct rrgb px[83];
+
+    rrgb_overlay_init(true);                     /* all slots EMPTY, output USB */
+    rrgb_overlay_set_caps(false);
+    rrgb_overlay_battery_show(0);
+    rrgb_overlay_set_fn_highlight(false);
+    rrgb_overlay_set_fn(true);
+    CHECK(rrgb_overlay_active(1000));            /* the slot status needs frames */
+    fill(px, 50);
+    rrgb_overlay_render(px, 83, 1000, 255);
+    for (int s = 0; s < 3; s++) { CHECK(eq(at(px, POS_F(s)), white(RRGB_BLE_VDIM))); }
+    CHECK(eq(at(px, POS_F4), white(RRGB_BLE_OUT)));
+    CHECK(eq(at(px, 0), white(50)));             /* Esc: the effect, no Fn white */
+    CHECK(eq(at(px, 31), white(50)));            /* Q: the effect, not dark */
+    rrgb_overlay_set_fn(false);
+    rrgb_overlay_set_fn_highlight(true);
+}
+
 /* ind.bat_low: the pulse decision. */
 static void test_bat_low_alpha(void) {
     CHECK(RRGB_BAT_LOW_PERIOD == 100);                   /* 2 s at 50 FPS */
@@ -474,6 +495,7 @@ int main(void) {
     test_fn_keys_live();
     test_caps_styles();
     test_caps_tint();
+    test_fn_highlight_off_ble();
     test_bat_low_alpha();
     test_bat_low_render();
     DONE();
