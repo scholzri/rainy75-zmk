@@ -747,7 +747,8 @@ button.mv { padding: .1rem .5rem; }
 
   const portBusyText = (e) =>
     "The port could not be opened (" + ((e && e.message) || e) + "). Close ZMK Studio or any other " +
-    "program using it (a serial terminal, rainy75_cfg.py) and try again.";
+    "program using it (a serial terminal, rainy75_cfg.py) and try again. While ZMK Studio is connected " +
+    "over USB, its port is busy: choose the other Rainy 75 port.";
 
   Object.assign(C, { USB_IDS, PROBE_MS, REQUEST_MS, WRITE_MS, SerialTransport, isKeyboardPort, probeSerial,
     findGrantedPort, pickPort, portBusyText });
@@ -819,8 +820,10 @@ button.mv { padding: .1rem .5rem; }
   /* Web Bluetooth. The SMP characteristic and its notifications need an
    * authenticated bond (CONFIG_MCUMGR_TRANSPORT_BT_PERM_RW_AUTHEN), so a
    * keyboard not paired with this computer fails at startNotifications(). */
-  const NOT_BONDED = 'The keyboard is not paired with this computer. Pair "Rainy 75 Pro" in the system ' +
-    "Bluetooth settings (type the code the computer shows, then Enter), then connect again.";
+  const NOT_BONDED = "The keyboard is not paired with this computer. Select a free profile (Fn+F1, F2 or F3), " +
+    'pair "Rainy 75 Pro" in the system Bluetooth settings, type the code the computer shows on the keyboard, ' +
+    "then press Enter, and connect again. If the computer lists it as paired already, remove that pairing " +
+    "on both sides first.";
 
   class NotBondedError extends Error {
     constructor(cause) {
@@ -2030,7 +2033,8 @@ button.mv { padding: .1rem .5rem; }
         try {
           device = await C.pickDevice(navigator.bluetooth);
         } catch (e) {
-          if (e.name !== "NotFoundError") throw e; /* NotFoundError: the picker was closed */
+          /* NotFoundError: the picker was closed, or no adapter */
+          if (e.name !== "NotFoundError" || /adapter/i.test(e.message)) throw e;
         }
         if (device) {
           setState("Connecting over Bluetooth");

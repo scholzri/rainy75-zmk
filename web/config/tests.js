@@ -1274,6 +1274,7 @@
     const r = await C.probeSerial(new FakePort(C, null, { failOpen: true }), 200);
     t.eq([r.ok, r.reason, r.error.message], [false, "open", "Failed to open serial port."]);
     t.ok(/Close ZMK Studio/.test(C.portBusyText(r.error)));
+    t.ok(/While ZMK Studio is connected over USB, its port is busy: choose the other Rainy 75 port\./.test(C.portBusyText(r.error)));
   });
 
   test("usb: a firmware without group 67 still is the console", async (C) => {
@@ -1504,6 +1505,8 @@
   test("ble: a keyboard not paired with this computer", async (C) => {
     const dev = new FakeDevice(C, new C.SimKeyboard(), { bonded: false });
     const e = await t.rejects(C.openBle(dev), /not paired with this computer/);
+    t.ok(/Fn\+F1, F2 or F3/.test(e.message) && /type the code the computer shows on the keyboard/.test(e.message), "the pairing steps");
+    t.ok(/remove that pairing on both sides first/.test(e.message), "an old pairing is removed first");
     t.ok(e instanceof C.NotBondedError);
     t.eq(e.cause.name, "SecurityError");
     t.eq(dev.disconnects, 1, "the link the page opened is closed again");
@@ -2442,6 +2445,31 @@
       first([]);
       await until(() => p.state() === "Connected over USB", 5000);
       t.eq(scans, 2, "one more look, after the first");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: no Bluetooth adapter is shown, a closed picker is not", async (C, env) => {
+    let error = new DOMException("Bluetooth adapter not available.", "NotFoundError");
+    let asked = 0;
+    const p = await openLive(env, {
+      requestDevice: async () => {
+        asked++;
+        throw error;
+      },
+    });
+    try {
+      await until(() => p.state() === "Not connected");
+      const ble = p.d.getElementById("btn-ble");
+      ble.click();
+      await until(() => asked === 1 && !ble.disabled);
+      t.eq(p.msg(), "Bluetooth adapter not available.");
+      error = new DOMException("User cancelled the requestDevice() chooser.", "NotFoundError");
+      ble.click();
+      await until(() => asked === 2 && !ble.disabled);
+      t.eq(p.msg(), "", "a closed picker says nothing");
+      t.eq(p.state(), "Not connected");
     } finally {
       p.close();
     }
