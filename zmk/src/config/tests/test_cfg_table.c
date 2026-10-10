@@ -9,7 +9,10 @@
  * list setting rgb.cycle may have at most CFG_LIST_MAX (16) names, so a 17th
  * effect makes cfg_init() refuse the whole table: the build with 17 stub
  * names checks that, and the builds with the real effects.c fail as soon as
- * the effect table grows that far. run_host_tests.sh builds every variant.
+ * the effect table grows that far. With CONFIG_RAINY75_OS_KEY the real
+ * os_key.c receives kb.os and kb.gui_lock, and kb.os_keys reads the count
+ * stubbed here (bound); without it kb.os_keys reads 0. run_host_tests.sh
+ * builds every variant.
  */
 
 #include <errno.h>
@@ -20,6 +23,7 @@
 
 #include "../cfg_registry.h"
 #include "../cfg_table.h"
+#include "os_key/os_key.h"
 #include "rainy_rgb/ble_status.h"
 #include "rainy_rgb/effects.h"
 #include "rainy_rgb/engine.h"
@@ -101,6 +105,13 @@ void rrgb_overlay_set_fn_highlight(bool on) { fn_highlight = on; }
 void rrgb_overlay_set_bat_low(uint8_t pct) { bat_low = pct; }
 void rrgb_ble_set_passkey_guide(bool on) { passkey_guide = on; }
 
+#ifdef CONFIG_RAINY75_OS_KEY
+/* The &os_key behavior's count over the live keymap (behavior_os_key.c). */
+static uint16_t bound = 2;
+
+uint16_t os_key_bound_count(void) { return bound; }
+#endif
+
 static struct cfg_value U(uint32_t u) {
     struct cfg_value v = {.u = u};
     return v;
@@ -124,6 +135,9 @@ static const char *const keys[CFG_ID_COUNT] = {
     [CFG_IND_FN_HIGHLIGHT] = "ind.fn_highlight",
     [CFG_IND_PASSKEY_GUIDE] = "ind.passkey_guide",
     [CFG_IND_BAT_LOW] = "ind.bat_low",
+    [CFG_KB_OS] = "kb.os",
+    [CFG_KB_GUI_LOCK] = "kb.gui_lock",
+    [CFG_KB_OS_KEYS] = "kb.os_keys",
 };
 
 static void test_accepted(void) {
@@ -139,6 +153,22 @@ static void test_accepted(void) {
     cfg_get(CFG_RGB_CYCLE, &v);
     CHECK(v.len == rrgb_effect_count); /* default: all effects in table order */
     CHECK(v.idx[0] == 0 && v.idx[v.len - 1] == rrgb_effect_count - 1);
+}
+
+/* The table's name lists are in the order of the owners' enums: a name maps
+ * to the enum value its owner switches on, not merely to some index. */
+static void test_name_order(void) {
+    const struct cfg_def *caps = cfg_def(CFG_IND_CAPS_STYLE), *idle = cfg_def(CFG_RGB_IDLE_MODE);
+    const struct cfg_def *os = cfg_def(CFG_KB_OS);
+
+    CHECK(cfg_name_count(caps) == 3 && cfg_name_count(idle) == 2 && cfg_name_count(os) == 2);
+    CHECK(cfg_name_find(caps, "key", 3) == RRGB_CAPS_KEY);
+    CHECK(cfg_name_find(caps, "tint", 4) == RRGB_CAPS_TINT);
+    CHECK(cfg_name_find(caps, "off", 3) == RRGB_CAPS_OFF);
+    CHECK(cfg_name_find(idle, "off", 3) == RRGB_IDLE_MODE_OFF);
+    CHECK(cfg_name_find(idle, "dim", 3) == RRGB_IDLE_MODE_DIM);
+    CHECK(cfg_name_find(os, "win", 3) == OS_KEY_OS_WIN);
+    CHECK(cfg_name_find(os, "mac", 3) == OS_KEY_OS_MAC);
 }
 
 /* cfg_init() pushed every default to its owner (cfg_def.notify = push). */
@@ -177,6 +207,40 @@ static void test_boot_effect(void) {
     CHECK(boot_effect == 1);
 }
 
+/* kb.os and kb.gui_lock reach the &os_key behavior; kb.os_keys is
+ * read-only, counted on every read. */
+static void test_kb(void) {
+    const struct cfg_def *os = cfg_def(CFG_KB_OS), *keys_def = cfg_def(CFG_KB_OS_KEYS);
+    struct cfg_value v = U(OS_KEY_OS_MAC);
+    int before = activity;
+
+    CHECK(cfg_name_count(os) == 2);
+    CHECK(strcmp(os->names(0), "win") == 0 && strcmp(os->names(1), "mac") == 0);
+    CHECK(cfg_u(CFG_KB_OS) == OS_KEY_OS_WIN && cfg_u(CFG_KB_GUI_LOCK) == 0);
+    CHECK(keys_def->type == CFG_UINT && keys_def->flags == (CFG_F_RO | CFG_F_PROXY));
+    CHECK(keys_def->min == 0 && keys_def->max == 83);
+#ifdef CONFIG_RAINY75_OS_KEY
+    CHECK(cfg_u(CFG_KB_OS_KEYS) == 2);
+    bound = 0;
+    CHECK(cfg_u(CFG_KB_OS_KEYS) == 0); /* a keymap saved without &os_key */
+    CHECK(os_key_press(74, OS_KEY_LGUI) == OS_KEY_LGUI && os_key_release(74) == OS_KEY_LGUI);
+    CHECK(cfg_set(CFG_KB_OS, &v, NULL) == 0);
+    CHECK(os_key_press(74, OS_KEY_LGUI) == OS_KEY_LALT && os_key_release(74) == OS_KEY_LALT);
+    v = U(1);
+    CHECK(cfg_set(CFG_KB_GUI_LOCK, &v, NULL) == 0);
+    CHECK(os_key_press(75, OS_KEY_LALT) == 0); /* Command, locked */
+    CHECK(cfg_reset(CFG_KB_OS) == 0 && cfg_reset(CFG_KB_GUI_LOCK) == 0);
+    CHECK(os_key_press(74, OS_KEY_LGUI) == OS_KEY_LGUI && os_key_release(74) == OS_KEY_LGUI);
+#else
+    CHECK(cfg_u(CFG_KB_OS_KEYS) == 0); /* no &os_key behavior in this build */
+#endif
+    CHECK(activity == before); /* not lighting settings: no idle restart */
+    v = U(5);
+    CHECK(cfg_set(CFG_KB_OS_KEYS, &v, NULL) == -EACCES && cfg_reset(CFG_KB_OS_KEYS) == -EACCES);
+    v = U(2);
+    CHECK(cfg_set(CFG_KB_OS, &v, NULL) == -EINVAL); /* win and mac only */
+}
+
 /* Only the build with more stub names than a list setting may have expects
  * the table to be refused; the real effect table must always be accepted. */
 #if defined(STUB_EFFECTS) && STUB_EFFECTS > CFG_LIST_MAX
@@ -198,9 +262,11 @@ int main(void) {
         return 1;
     } else {
         test_accepted();
+        test_name_order();
         test_defaults_pushed();
         test_set_reaches_owner();
         test_boot_effect();
+        test_kb();
     }
     if (failed) {
         printf("%d check(s) failed\n", failed);

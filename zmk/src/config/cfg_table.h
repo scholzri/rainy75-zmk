@@ -28,6 +28,9 @@ enum cfg_id {
     CFG_IND_FN_HIGHLIGHT,
     CFG_IND_PASSKEY_GUIDE,
     CFG_IND_BAT_LOW,
+    CFG_KB_OS,
+    CFG_KB_GUI_LOCK,
+    CFG_KB_OS_KEYS,
     CFG_ID_COUNT
 };
 
