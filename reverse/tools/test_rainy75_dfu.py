@@ -115,6 +115,26 @@ class FakeKeyboard:
         return seq
 
 
+class ChunkSize(unittest.TestCase):
+    def dfu_with(self, reply):
+        d = dfu.Dfu.__new__(dfu.Dfu)
+        def request(*a, **k):
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+        d.request = request
+        return d
+
+    def test_from_the_buffer_size(self):
+        self.assertEqual(self.dfu_with({"buf_size": 1024, "buf_count": 4}).chunk_size(), 960)
+
+    def test_old_firmware_keeps_420(self):
+        self.assertEqual(self.dfu_with({"rc": 8}).chunk_size(), dfu.CHUNK)
+        self.assertEqual(self.dfu_with(RuntimeError("device rc=8")).chunk_size(), dfu.CHUNK)
+        self.assertEqual(self.dfu_with(TimeoutError()).chunk_size(), dfu.CHUNK)
+        self.assertEqual(self.dfu_with({"buf_size": 512}).chunk_size(), 448)
+
+
 class Pipelined(unittest.TestCase):
     def run_upload(self, size, drop=()):
         d = dfu.BleDfu.__new__(dfu.BleDfu)
@@ -125,7 +145,7 @@ class Pipelined(unittest.TestCase):
         d._send = kb.send
         data = bytes(i & 0xFF for i in range(size))
         d.REPLY_S = 0.05
-        d.upload(data, progress=False)
+        d.loop.run_until_complete(d._upload(data, False, dfu.CHUNK))
         return kb, data
 
     def test_clean_upload(self):

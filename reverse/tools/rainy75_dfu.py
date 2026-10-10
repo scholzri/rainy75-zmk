@@ -37,9 +37,10 @@ import restore_original as smp
 IMG_MGMT_STATE = 0
 IMG_MGMT_UPLOAD = 1
 OS_MGMT_RESET = 5
-CHUNK = 420          # image bytes per request; ~26 KiB/s, larger gains nothing
-                     # (the firmware's receive path is CPU bound per byte, see
-                     # docs/zmk-firmware.md) and must fit the 512 B SMP buffer
+CHUNK = 420          # image bytes per request with a 512 B SMP buffer (the
+                     # firmware before 0.4.1, which cannot report its size)
+OS_MGMT_PARAMS = 6
+CHUNK_SPARE = 64     # SMP header and CBOR keys of the largest request
 
 
 def image_hash(data):
@@ -88,15 +89,27 @@ class Dfu:
         body = raw[smp.SMP_HDR_SIZE:smp.SMP_HDR_SIZE + length]
         return rainy75_rgb._cbor_decode(body)[0] if body else {}
 
+    def chunk_size(self):
+        """Image bytes per request: from the keyboard's SMP buffer size (os
+        group "mcumgr params", firmware 0.4.1 and later), else CHUNK."""
+        try:
+            r = self.request(smp.SMP_OP_READ_REQ, smp.SMP_GROUP_OS,
+                             OS_MGMT_PARAMS, [], retries=0)
+        except (TimeoutError, RuntimeError):
+            return CHUNK
+        buf = r.get("buf_size", 0)
+        return max(CHUNK, buf - CHUNK_SPARE) if r.get("rc", 0) == 0 else CHUNK
+
     def images(self):
         return self.request(smp.SMP_OP_READ_REQ, smp.SMP_GROUP_IMG,
                             IMG_MGMT_STATE, []).get("images", [])
 
     def upload(self, data, progress=True):
+        chunk = self.chunk_size()
         off, t0 = 0, time.time()
         while off < len(data):
             pairs = [("off", smp.cbor_encode_uint(off)),
-                     ("data", smp.cbor_encode_bstr(data[off:off + CHUNK]))]
+                     ("data", smp.cbor_encode_bstr(data[off:off + chunk]))]
             if off == 0:
                 pairs = [("image", smp.cbor_encode_uint(0)),
                          ("len", smp.cbor_encode_uint(len(data)))] + pairs
@@ -106,7 +119,7 @@ class Dfu:
                              timeout_s=30.0 if off == 0 else 5.0)
             if r.get("rc", 0) != 0:
                 raise RuntimeError(f"upload refused at offset {off}: {r}")
-            off = r.get("off", off + CHUNK)
+            off = r.get("off", off + chunk)
             if progress:
                 pct = 100 * off // len(data)
                 print(f"\r  {pct:3d} %  {off}/{len(data)} B", end="", flush=True)
@@ -216,9 +229,10 @@ class BleDfu(Dfu):
         return seq
 
     def upload(self, data, progress=True):
-        self.loop.run_until_complete(self._upload(data, progress))
+        chunk = self.chunk_size()
+        self.loop.run_until_complete(self._upload(data, progress, chunk))
 
-    async def _upload(self, data, progress):
+    async def _upload(self, data, progress, chunk=CHUNK):
         """Pipelined upload: up to WINDOW chunks in flight. Every reply
         carries the offset the keyboard has reached (also for a chunk at the
         wrong offset, which it skips), so replies are cumulative: on a gap or
@@ -236,13 +250,13 @@ class BleDfu(Dfu):
             window = 1 if first else self.WINDOW   # the first one erases slot 1
             while len(inflight) < window and nxt < size:
                 pairs = [("off", smp.cbor_encode_uint(nxt)),
-                         ("data", smp.cbor_encode_bstr(data[nxt:nxt + CHUNK]))]
+                         ("data", smp.cbor_encode_bstr(data[nxt:nxt + chunk]))]
                 if nxt == 0:
                     pairs = [("image", smp.cbor_encode_uint(0)),
                              ("len", smp.cbor_encode_uint(size))] + pairs
                 seq = await self._send(smp.SMP_OP_WRITE_REQ, smp.SMP_GROUP_IMG,
                                        IMG_MGMT_UPLOAD, pairs)
-                inflight[seq] = min(nxt + CHUNK, size)
+                inflight[seq] = min(nxt + chunk, size)
                 nxt = inflight[seq]
             try:
                 frame = await asyncio.wait_for(self.frames.get(),
