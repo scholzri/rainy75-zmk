@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Firmware update for the Rainy 75 over USB (mcumgr SMP image management).
+Firmware update for the Rainy 75 over USB or Bluetooth (mcumgr SMP image management).
 
 About 7x faster than the mcumgr CLI over USB (313 KB in about 12 s instead of
 85 s): the CLI pauses about 20 ms after every 127-byte serial line, a pacing
@@ -18,11 +18,14 @@ Usage:
     rainy75_dfu.py reset
 
 The port is found by USB product name (the console port, interface 0); use
---port to name it. A test image runs once: it stays only if it (or you)
+--port to name it. --ble updates over Bluetooth instead (needs bleak, and a
+computer the keyboard is paired with; --address picks the keyboard if there is
+more than one): about 30 to 60 s for an image, useful when USB is not at hand. A test image runs once: it stays only if it (or you)
 confirms it, else the next reset goes back to the previous image.
 """
 
 import argparse
+import asyncio
 import hashlib
 import struct
 import sys
@@ -130,6 +133,57 @@ class Dfu:
             pass                            # the reset may beat the response
 
 
+class BleDfu(Dfu):
+    """The same requests over Bluetooth (rainy75_rgb_ble's SMP client).
+    BlueZ now and then drops a reply notification: a request that times out
+    is sent again. That is safe for the upload too, because the keyboard
+    answers a repeated chunk with the offset it already has."""
+
+    RETRIES = 5
+
+    def __init__(self, address=None):
+        import rainy75_rgb_ble          # needs bleak, so only for --ble
+        self.loop = asyncio.new_event_loop()
+        self.kb = rainy75_rgb_ble.Rainy75BLE(address=address)
+        try:
+            self.loop.run_until_complete(self.kb.connect())
+        except BaseException:
+            self.loop.close()
+            raise
+        # BlueZ reports the negotiated ATT MTU only after this; without it the
+        # client writes 20-byte pieces and an image takes about 2.3x longer.
+        backend = getattr(self.kb.client, "_backend", None)
+        if hasattr(backend, "_acquire_mtu"):
+            try:
+                self.loop.run_until_complete(backend._acquire_mtu())
+            except Exception:
+                pass                        # keep the 20-byte pieces
+
+    def close(self):
+        try:
+            self.loop.run_until_complete(self.kb.disconnect())
+        except Exception:
+            pass
+        self.loop.close()
+
+    def request(self, op, group, cmd, pairs, timeout_s=5.0, retries=RETRIES):
+        self.kb.timeout = timeout_s
+        for attempt in range(1 + retries):
+            try:
+                return self.loop.run_until_complete(
+                    self.kb._request(op, cmd, pairs, group=group))
+            except asyncio.TimeoutError:
+                if attempt == retries:
+                    raise TimeoutError("no answer over Bluetooth") from None
+
+    def reset(self):
+        try:
+            self.request(smp.SMP_OP_WRITE_REQ, smp.SMP_GROUP_OS, OS_MGMT_RESET,
+                         [], timeout_s=2.0, retries=0)
+        except (TimeoutError, RuntimeError):
+            pass                            # the reset may beat the response
+
+
 def print_images(images):
     for i in images:
         flags = [f for f in ("active", "confirmed", "pending", "permanent")
@@ -145,6 +199,8 @@ def parse_hash(text):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--port", help="serial port (default: found by USB name)")
+    ap.add_argument("--ble", action="store_true", help="over Bluetooth instead of USB")
+    ap.add_argument("--address", help="with --ble: the keyboard's Bluetooth address")
     sub = ap.add_subparsers(dest="cmd", required=True)
     up = sub.add_parser("upload", help="upload a signed image to slot 1")
     up.add_argument("file")
@@ -158,10 +214,17 @@ def main():
     sub.add_parser("reset", help="reset the keyboard")
     a = ap.parse_args()
 
-    port = a.port or rainy75_rgb.find_port()
-    if not port:
-        sys.exit("No Rainy 75 found on USB (use --port).")
-    dfu = Dfu(port)
+    if a.ble:
+        port = "Bluetooth"
+        try:
+            dfu = BleDfu(a.address)
+        except Exception as e:
+            sys.exit(f"No Bluetooth connection to the Rainy 75: {e}")
+    else:
+        port = a.port or rainy75_rgb.find_port()
+        if not port:
+            sys.exit("No Rainy 75 found on USB (use --port, or --ble).")
+        dfu = Dfu(port)
     try:
         if a.cmd == "upload":
             data = open(a.file, "rb").read()

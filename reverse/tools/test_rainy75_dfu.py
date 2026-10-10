@@ -1,5 +1,6 @@
 """Unit tests for rainy75_dfu.py (no hardware needed)."""
 import hashlib
+import asyncio
 import struct
 import unittest
 from unittest import mock
@@ -50,6 +51,45 @@ class SeqMatch(unittest.TestCase):
     def test_only_stale_reply_times_out(self):
         with self.assertRaises(TimeoutError):
             self.request([_reply(3)])
+
+
+class FakeBle:
+    """Stands in for rainy75_rgb_ble.Rainy75BLE: a list of outcomes, each
+    a reply map or None for a dropped notification (timeout)."""
+    def __init__(self, outcomes):
+        self.outcomes, self.calls, self.timeout = list(outcomes), [], None
+
+    async def _request(self, op, cmd, pairs, group=None):
+        self.calls.append((op, group, cmd))
+        r = self.outcomes.pop(0)
+        if r is None:
+            raise asyncio.TimeoutError
+        return r
+
+
+class BleRetry(unittest.TestCase):
+    def ble(self, outcomes):
+        d = dfu.BleDfu.__new__(dfu.BleDfu)
+        d.loop = asyncio.new_event_loop()
+        d.kb = FakeBle(outcomes)
+        self.addCleanup(d.loop.close)
+        return d
+
+    def test_dropped_reply_is_sent_again(self):
+        d = self.ble([None, None, {"off": 420}])
+        self.assertEqual(d.request(2, 1, 1, [], timeout_s=5.0), {"off": 420})
+        self.assertEqual(d.kb.calls, [(2, 1, 1)] * 3)
+        self.assertEqual(d.kb.timeout, 5.0)
+
+    def test_gives_up_after_the_retries(self):
+        d = self.ble([None] * (1 + dfu.BleDfu.RETRIES))
+        with self.assertRaises(TimeoutError):
+            d.request(0, 1, 0, [])
+
+    def test_reset_without_answer_is_fine(self):
+        d = self.ble([None])
+        d.reset()
+        self.assertEqual(d.kb.calls, [(2, 0, 5)])
 
 
 if __name__ == "__main__":
