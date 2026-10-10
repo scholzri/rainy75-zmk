@@ -74,6 +74,7 @@
   test("static: CSP meta blocks the network, first after charset", (C, env) => {
     const m = /<meta charset="utf-8">\s*<meta http-equiv="Content-Security-Policy" content="([^"]+)">/.exec(env.html);
     t.ok(m, "CSP meta tag right after the charset");
+    t.eq(m[1], "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'");
     t.ok(m[1].startsWith("default-src 'none'; "), "default-src 'none' first");
     t.ok(!/connect-src/.test(m[1]), "no connect-src: default-src 'none' covers it");
   });

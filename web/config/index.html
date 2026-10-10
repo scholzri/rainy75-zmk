@@ -357,7 +357,9 @@ button.mv { padding: .1rem .5rem; }
    * it receives and onClose(err) when the link goes away. A reply matches by
    * op, group, command and the sequence number of any attempt of the request,
    * so a late answer to the first attempt still counts. timeoutMs per attempt
-   * (2 s USB, 5 s Bluetooth), retries more attempts (1). */
+   * (2 s USB, 5 s Bluetooth), retries more attempts (1). The timer starts
+   * before send() is awaited but cannot cut it short, so send() must always
+   * settle (reject on loss, close and its own deadline). */
   class SmpClient {
     constructor(transport, opts) {
       this.transport = transport;
