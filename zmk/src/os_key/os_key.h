@@ -44,7 +44,9 @@ enum os_key_os {
     OS_KEY_OS_MAC = 1,
 };
 
-/* Back to the start: win, no GUI lock, nothing held. */
+/* Back to the start: win, no GUI lock, nothing held. For tests only: never
+ * call it while an &os_key key is held, its release would then send nothing
+ * and leave the modifier down. */
 void os_key_reset(void);
 /* kb.os (enum os_key_os; any value but OS_KEY_OS_MAC counts as win) and
  * kb.gui_lock, used from the next press on. */
