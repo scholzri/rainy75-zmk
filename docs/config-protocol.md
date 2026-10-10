@@ -67,8 +67,9 @@ with `CONFIG_RAINY75_CONFIG`.
 | `c` | CBOR unsigned `0xRRGGBB` | null | null |
 | `l` | CBOR list of texts, a subset of `a` in order | list of names | null |
 
-`l`: the order is the client's order (kept as sent); duplicates are dropped, the first one
-kept, and `set` echoes the result.
+`l`: at most 16 entries; a longer request is refused with `EINVAL`, even if it contains
+duplicates. The order is the client's order (kept as sent); duplicates are dropped within
+those 16, the first one kept, and `set` echoes the result.
 
 `flags`: bit 0 = read-only; the other bits are reserved, clients ignore them. Names are
 identifiers, not display text; clients own labels.
@@ -118,7 +119,10 @@ read).
 - `rgb.val_battery`: while no USB host is connected the effect renders at
   `min(rgb.val, rgb.val_battery)`; `rgb.val` itself does not change. "USB host connected"
   means a host has configured the keyboard, also while the host sleeps (ZMK
-  `zmk_usb_is_hid_ready()`).
+  `zmk_usb_is_hid_ready()`). Known limit: if the host put the USB bus to sleep and the
+  cable is then pulled, the keyboard can still count as connected (no cap, no low-battery
+  pulse) until the next USB event; with output USB the first keypress clears it, with
+  output Bluetooth it can persist.
 - `rgb.idle_s` / `rgb.idle_mode`: after `rgb.idle_s` seconds without a key event, the
   effect turns off (`off`) or renders at a quarter of its brightness (`dim`); the next key
   brings it back. The indicators (CapsLock, Fn highlight, battery gauge, Bluetooth status,
@@ -139,10 +143,11 @@ read).
   keyboard reacts to a passkey request until Enter is pressed, so the host's pairing dialog
   is the only cue that digits are expected. After Enter the slot being verified still
   blinks and the effect stays off until the pairing ends.
-- `ind.bat_low`: while no USB host is connected and the battery level is below this
-  percentage, Esc pulses red (2 s period) on top of the effect; 0 = off. It shows only while
-  the effect is drawn (RGB on, not idle `off`, not host pixel mode, not during a Bluetooth
-  animation), and a battery level of 0 (no reading yet) never pulses.
+- `ind.bat_low`: while no USB host is connected (as for `rgb.val_battery`, with the same
+  known limit) and the battery level is below this percentage, Esc pulses red (2 s period)
+  on top of the effect; 0 = off. It shows only while the effect is drawn (RGB on, not idle
+  `off`, not host pixel mode, not during a Bluetooth animation), and a battery level of 0
+  (no reading yet) never pulses.
 
 ## Storage
 
