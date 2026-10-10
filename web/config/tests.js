@@ -1033,6 +1033,220 @@
     t.ok(/ZMK Studio/.test(C.OS_KEYS_WARNING));
   });
 
+  // ---- Task 9: Web Serial transport ----
+
+  /* A Web Serial port in software. sim: the SimKeyboard behind the console
+   * port; null makes it the Studio port, which never answers. Every reply
+   * comes after a log line, cut into reads of 7 bytes. stall makes every
+   * write hang until the stream is aborted (a writer that does not drain). */
+  class FakePort {
+    constructor(C, sim, opts = {}) {
+      this.C = C;
+      this.sim = sim;
+      this.info = opts.info || { usbVendorId: 0x1d50, usbProductId: 0x615e };
+      this.failOpen = !!opts.failOpen;
+      this.opens = 0;
+      this.isOpen = false;
+      this.ctrl = null;
+      this.stall = false;
+      this.writeAborted = false;
+    }
+
+    getInfo() {
+      return this.info;
+    }
+
+    async open(options) {
+      this.opens++;
+      if (this.failOpen) throw new Error("Failed to open serial port.");
+      if (this.isOpen) throw new Error("The port is already open.");
+      this.isOpen = true;
+      this.options = options;
+      const self = this;
+      const decoder = new this.C.SerialDecoder();
+      this.readable = new ReadableStream({
+        start(ctrl) {
+          self.ctrl = ctrl;
+          ctrl.enqueue(ascii("*** Booting Zephyr OS ***\r\n[00:00:00.010,000] <inf> zmk: boot\r\n"));
+        },
+        cancel() {
+          self.ctrl = null;
+        },
+      });
+      this.writable = new WritableStream({
+        write(chunk, controller) {
+          if (self.stall) {
+            return new Promise((resolve, reject) => {
+              controller.signal.addEventListener("abort", () => {
+                self.writeAborted = true;
+                reject(new Error("The write was aborted."));
+              });
+            });
+          }
+          for (const packet of decoder.push(chunk)) {
+            if (!self.sim) continue;
+            const reply = joinLines([ascii("[00:00:01.000,000] <inf> cfg_mgmt: log\r\n")].concat(self.C.serialEncode(self.sim.handle(packet))));
+            setTimeout(() => {
+              for (let i = 0; i < reply.length && self.ctrl; i += 7) self.ctrl.enqueue(reply.slice(i, i + 7));
+            }, 2);
+          }
+        },
+      });
+    }
+
+    async setSignals(s) {
+      this.signals = s;
+    }
+
+    async close() {
+      if (this.readable.locked || this.writable.locked) throw new Error("Cannot close a locked port.");
+      this.isOpen = false;
+    }
+
+    unplug() {
+      this.ctrl.error(new Error("The device has been lost."));
+      this.ctrl = null;
+    }
+  }
+
+  test("usb: the console port answers the probe, through the log", async (C) => {
+    const port = new FakePort(C, new C.SimKeyboard());
+    const r = await C.probeSerial(port, 200);
+    t.ok(r.ok, "console port");
+    t.eq(port.options, { baudRate: 115200 });
+    t.eq(port.signals, { dataTerminalReady: true, requestToSend: true });
+    const model = new C.ConfigModel(r.client);
+    await model.load();
+    t.eq(model.values.size, 21);
+    t.ok(r.transport.decoder.logLines >= 2, "log lines were skipped");
+    await r.transport.close();
+    t.ok(!port.isOpen, "closed again");
+  });
+
+  test("usb: the Studio port stays silent and is closed again", async (C) => {
+    const port = new FakePort(C, null);
+    const t0 = Date.now();
+    const r = await C.probeSerial(port, 200);
+    t.eq(r, { ok: false, reason: "silent" });
+    t.ok(Date.now() - t0 < 1000, "about the probe time");
+    t.ok(!port.isOpen);
+    t.eq(C.PROBE_MS, 1000);
+  });
+
+  test("usb: a port in use", async (C) => {
+    const r = await C.probeSerial(new FakePort(C, null, { failOpen: true }), 200);
+    t.eq([r.ok, r.reason, r.error.message], [false, "open", "Failed to open serial port."]);
+    t.ok(/Close ZMK Studio/.test(C.portBusyText(r.error)));
+  });
+
+  test("usb: a firmware without group 67 still is the console", async (C) => {
+    const r = await C.probeSerial(new FakePort(C, new C.SimKeyboard({ noConfig: true })), 200);
+    t.ok(r.ok);
+    await t.rejects(new C.ConfigModel(r.client).load(), /no runtime settings/);
+    await r.transport.close();
+  });
+
+  test("usb: later visits find the console among the granted ports", async (C) => {
+    const other = new FakePort(C, null, { info: { usbVendorId: 0x2341, usbProductId: 0x43 } });
+    const studio = new FakePort(C, null);
+    const consolePort = new FakePort(C, new C.SimKeyboard());
+    const serial = { getPorts: async () => [other, studio, consolePort] };
+    const r = await C.findGrantedPort(serial, 200);
+    t.ok(r && r.ok);
+    t.eq([other.opens, studio.opens, consolePort.opens], [0, 1, 1]);
+    t.ok(!studio.isOpen && consolePort.isOpen);
+    await r.transport.close();
+    t.eq(await C.findGrantedPort({ getPorts: async () => [studio] }, 200), null);
+  });
+
+  test("usb: the picker shows only the keyboard", async (C) => {
+    let asked = null;
+    const serial = {
+      requestPort: async (o) => {
+        asked = o;
+        return "port";
+      },
+    };
+    t.eq(await C.pickPort(serial), "port");
+    t.eq(asked, { filters: [{ usbVendorId: 0x1d50, usbProductId: 0x615e }] });
+  });
+
+  test("usb: unplugging fails the waiting request and tells the page", async (C) => {
+    const sim = new C.SimKeyboard();
+    const port = new FakePort(C, sim);
+    const r = await C.probeSerial(port, 200);
+    let lost = null;
+    r.client.onClose = (e) => {
+      lost = e.message;
+    };
+    sim.handle = () => C.smpFrame(9, 9, 9, 9, new Uint8Array(0));
+    const p = r.client.request(C.SMP.READ, 67, 0, {});
+    await sleep(10);
+    port.unplug();
+    await t.rejects(p, /closed/);
+    t.eq(lost, "The device has been lost.");
+  });
+
+  /* The contract of SmpClient: it awaits send() before its timeout can fire,
+   * so send() always settles. */
+
+  test("usb: requests of the console client time out after 2 s, once retried", async (C) => {
+    const r = await C.probeSerial(new FakePort(C, new C.SimKeyboard()), 200);
+    t.eq([r.client.timeoutMs, r.client.retries, C.WRITE_MS], [2000, 1, 2000]);
+    await r.transport.close();
+  });
+
+  test("usb: a write pending when the port is lost fails", async (C) => {
+    const port = new FakePort(C, new C.SimKeyboard());
+    const r = await C.probeSerial(port, 200);
+    port.stall = true;
+    const p = r.transport.send(C.smpFrame(C.SMP.READ, 67, 0, 5, new Uint8Array(0)));
+    await sleep(10);
+    port.unplug();
+    await t.rejects(p, /device has been lost/);
+    await t.rejects(r.transport.send(new Uint8Array(8)), /closed/);
+    await r.transport.close();
+    t.ok(port.writeAborted && !port.isOpen, "the stalled write was aborted, the port closed");
+  });
+
+  test("usb: a write pending when the transport closes fails and is aborted", async (C) => {
+    const port = new FakePort(C, new C.SimKeyboard());
+    const r = await C.probeSerial(port, 200);
+    port.stall = true;
+    const p = r.transport.send(C.smpFrame(C.SMP.READ, 67, 0, 5, new Uint8Array(0)));
+    await sleep(10);
+    await r.transport.close();
+    await t.rejects(p, /closed/);
+    t.ok(port.writeAborted, "the stalled write was aborted");
+    t.ok(!port.isOpen, "closed");
+  });
+
+  test("usb: a stalled writer fails the request at its deadline", async (C) => {
+    const port = new FakePort(C, new C.SimKeyboard());
+    const r = await C.probeSerial(port, 200);
+    r.transport.writeMs = 40;
+    port.stall = true;
+    const t0 = Date.now();
+    const e = await t.rejects(r.client.request(C.SMP.READ, 67, 0, {}), /sending failed: .*timed out/);
+    t.ok(e instanceof C.TransportError);
+    t.ok(Date.now() - t0 < 1000, "not the 2 s request timeout");
+    await r.transport.close();
+    t.ok(port.writeAborted && !port.isOpen, "the stalled write was aborted, the port closed");
+  });
+
+  test("usb: after a probe closed the Studio port nothing stays locked", async (C) => {
+    const port = new FakePort(C, null);
+    t.eq(await C.probeSerial(port, 200), { ok: false, reason: "silent" });
+    t.ok(!port.isOpen && !port.readable.locked && !port.writable.locked, "no lock left");
+    port.sim = new C.SimKeyboard();
+    const r = await C.probeSerial(port, 200);
+    t.ok(r.ok, "the same port opens again and its reads reach the decoder");
+    t.ok(r.transport.decoder.logLines >= 2);
+    t.eq(port.opens, 2);
+    await r.transport.close();
+    t.ok(!port.readable.locked && !port.writable.locked);
+  });
+
   // end of tests
 
   async function runOne(fn, C, env) {

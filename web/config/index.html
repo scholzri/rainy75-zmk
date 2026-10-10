@@ -461,6 +461,180 @@ body {
   }
 
   Object.assign(C, { SERIAL_LINE_MAX, crc16, b64encode, b64decode, serialEncode, SerialDecoder });
+
+  /* Web Serial. The keyboard has two CDC ACM ports with the same USB IDs: the
+   * console (interface 0: log and SMP) and ZMK Studio (interface 3). Web
+   * Serial cannot tell them apart, so a port is the console when it answers an
+   * SMP request (group 67 info) within PROBE_MS, sent twice; any answer
+   * counts, also rc 8 from a firmware without group 67. */
+  const USB_IDS = { usbVendorId: 0x1d50, usbProductId: 0x615e };
+  const PROBE_MS = 1000;
+  const REQUEST_MS = 2000; /* SMP request timeout per attempt over USB */
+  const WRITE_MS = 2000; /* a write that is not done by then fails (SmpClient waits for send()) */
+
+  class SerialTransport {
+    constructor(port) {
+      this.port = port;
+      this.kind = "usb";
+      this.decoder = new SerialDecoder();
+      this.onPacket = null;
+      this.onClose = null;
+      this.closed = false;
+      this.reader = null;
+      this.writer = null;
+      this.loop = null;
+      this.writeMs = WRITE_MS;
+      this.sending = new Set(); /* settle() of every write in flight */
+      this.stalled = false; /* a write was cut short: it may still sit in the stream */
+    }
+
+    async open() {
+      await this.port.open({ baudRate: 115200 });
+      try {
+        await this.port.setSignals({ dataTerminalReady: true, requestToSend: true });
+      } catch (e) {
+        /* optional: the console works without the line signals */
+      }
+      this.writer = this.port.writable.getWriter();
+      this.reader = this.port.readable.getReader();
+      this.loop = this._read();
+    }
+
+    async _read() {
+      let err = null;
+      try {
+        for (;;) {
+          const { value, done } = await this.reader.read();
+          if (done) break;
+          for (const packet of this.decoder.push(value)) if (this.onPacket) this.onPacket(packet);
+        }
+      } catch (e) {
+        err = e;
+      }
+      try {
+        this.reader.releaseLock();
+      } catch (e) {
+        /* released already */
+      }
+      this._failWrites(err || new Error("the port closed"));
+      if (!this.closed) {
+        this.closed = true;
+        if (this.onClose) this.onClose(err || new Error("the port closed"));
+      }
+    }
+
+    _failWrites(err) {
+      if (this.sending.size) this.stalled = true;
+      for (const settle of Array.from(this.sending)) settle(err);
+    }
+
+    /* Always settles: it fails when the port is lost or closed while the write
+     * is pending, and after writeMs, so SmpClient (which awaits it before its
+     * own timeout can fire) never hangs on a writer that does not drain. */
+    async send(packet) {
+      if (this.closed) throw new Error("the port is closed");
+      const lines = serialEncode(packet);
+      const all = new Uint8Array(lines.reduce((n, l) => n + l.length, 0));
+      let o = 0;
+      for (const l of lines) {
+        all.set(l, o);
+        o += l.length;
+      }
+      const write = this.writer.write(all);
+      await new Promise((resolve, reject) => {
+        let timer = null;
+        const settle = (err) => {
+          clearTimeout(timer);
+          this.sending.delete(settle);
+          if (err) reject(err);
+          else resolve();
+        };
+        this.sending.add(settle);
+        timer = setTimeout(() => {
+          this.stalled = true;
+          settle(new Error("the write timed out"));
+        }, this.writeMs);
+        write.then(() => settle(null), settle);
+      });
+    }
+
+    async close() {
+      this.closed = true;
+      this._failWrites(new Error("the port was closed"));
+      try {
+        if (this.reader) await this.reader.cancel();
+      } catch (e) {
+        /* the port is gone */
+      }
+      try {
+        if (this.loop) await this.loop;
+      } catch (e) {
+        /* the port is gone */
+      }
+      try {
+        /* a write that never finishes would keep port.close() waiting */
+        if (this.writer && this.stalled) this.writer.abort().catch(() => {});
+        if (this.writer) this.writer.releaseLock();
+      } catch (e) {
+        /* released already */
+      }
+      try {
+        await this.port.close();
+      } catch (e) {
+        /* closed already */
+      }
+    }
+  }
+
+  function isKeyboardPort(port) {
+    const i = port.getInfo();
+    return i.usbVendorId === USB_IDS.usbVendorId && i.usbProductId === USB_IDS.usbProductId;
+  }
+
+  /* -> {ok: true, transport, client} for the console port, {ok: false,
+   * reason: "silent"} for a port that does not answer (the Studio port), or
+   * {ok: false, reason: "open", error} if the port cannot be opened. */
+  async function probeSerial(port, probeMs = PROBE_MS) {
+    const transport = new SerialTransport(port);
+    try {
+      await transport.open();
+    } catch (error) {
+      await transport.close();
+      return { ok: false, reason: "open", error };
+    }
+    const client = new C.SmpClient(transport, { timeoutMs: REQUEST_MS, retries: 1 });
+    try {
+      await client.request(C.SMP.READ, C.SMP.GROUP_CFG, 0, {}, { timeoutMs: probeMs / 2, retries: 1 });
+    } catch (e) {
+      if (!(e instanceof C.DeviceError)) {
+        client.close();
+        await transport.close();
+        return { ok: false, reason: "silent" };
+      }
+    }
+    return { ok: true, transport, client };
+  }
+
+  /* Later visits: the ports this page may use already, without a picker. */
+  async function findGrantedPort(serial, probeMs) {
+    for (const port of await serial.getPorts()) {
+      if (!isKeyboardPort(port)) continue;
+      const r = await probeSerial(port, probeMs);
+      if (r.ok) return r;
+    }
+    return null;
+  }
+
+  function pickPort(serial) {
+    return serial.requestPort({ filters: [USB_IDS] });
+  }
+
+  const portBusyText = (e) =>
+    "The port could not be opened (" + ((e && e.message) || e) + "). Close ZMK Studio or any other " +
+    "program using it (a serial terminal, rainy75_cfg.py) and try again.";
+
+  Object.assign(C, { USB_IDS, PROBE_MS, REQUEST_MS, WRITE_MS, SerialTransport, isKeyboardPort, probeSerial,
+    findGrantedPort, pickPort, portBusyText });
   // end of USB transport
 })();
 </script>
