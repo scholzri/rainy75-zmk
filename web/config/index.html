@@ -95,6 +95,20 @@ input[role="switch"]:checked::before { transform: translateX(1.25rem); }
 @media (max-width: 40rem) { .row { grid-template-columns: 1fr; } }
 /* the hidden attribute also hides what a class makes a flex box (.conn) */
 [hidden] { display: none !important; }
+input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+input[type="color"] {
+  width: 3rem; height: 2rem; padding: 0; cursor: pointer;
+  background: var(--card); border: 1px solid var(--line); border-radius: .3rem;
+}
+.control output { min-width: 6.5rem; }
+ol.cycle { display: grid; gap: .25rem; padding: 0; list-style: none; }
+ol.cycle li {
+  display: flex; align-items: center; gap: .5rem; padding: .3rem .5rem;
+  background: var(--bg); border: 1px solid var(--line); border-radius: .4rem;
+}
+ol.cycle label { flex: 1; }
+ol.cycle .grip { color: var(--muted); cursor: grab; }
+button.mv { padding: .1rem .5rem; }
 /* end of styles */
 </style>
 </head>
@@ -137,6 +151,7 @@ input[role="switch"]:checked::before { transform: translateX(1.25rem); }
     <section id="sec-ind" class="card" aria-labelledby="h-ind"><h2 id="h-ind">Indicators</h2><div id="rows-ind"></div></section>
     <section id="sec-kb" class="card" aria-labelledby="h-kb"><h2 id="h-kb">Keyboard</h2><div id="rows-kb"></div></section>
     <p id="hidden-note" class="help" hidden></p>
+    <p class="conn"><button id="btn-reset" type="button">Reset to defaults</button></p>
   </div>
   <section id="demo" class="card" aria-labelledby="h-demo" hidden>
     <h2 id="h-demo">Simulated keyboard</h2>
@@ -1685,8 +1700,8 @@ input[role="switch"]:checked::before { transform: translateX(1.25rem); }
     { key: "rgb.speed", type: "u", label: "Speed", help: "Animation speed (Fn+Right, Fn+Left)." },
     { key: "rgb.cycle", type: "l", label: "Effect cycle",
       help: "The effects Fn+Enter steps through, in this order; from an effect that is not in the list it " +
-        "goes to the first one. Tick the ones you want and drag them, or use the arrow buttons, to set " +
-        "the order. With none ticked, all effects are used. A list holds at most 16 entries. Applies from " +
+        "goes to the first one. Tick the ones you want and drag them, or use the up and down arrow " +
+        "buttons (Move up, Move down) of a row, to set the order. With none ticked, all effects are used. A list holds at most 16 entries. Applies from " +
         "the next Fn+Enter." },
     { key: "rgb.boot_effect", type: "e", label: "Effect at power-on",
       help: "Last used keeps the effect you chose last. Applies from the next start." },
@@ -2120,9 +2135,8 @@ input[role="switch"]:checked::before { transform: translateX(1.25rem); }
   /* A widget: {label, control, extra?, update(v), busy?()}. */
   function widgetFor(me, entry, info, id, helpId) {
     if (entry.ro) return textWidget(me, entry, info, id, helpId);
-    if (entry.type === "b") return toggleWidget(me, entry, info, id, helpId);
-    if (entry.type === "e") return selectWidget(me, entry, info, id, helpId);
-    return textWidget(me, entry, info, id, helpId);
+    const make = { b: toggleWidget, e: selectWidget, u: sliderWidget, c: colorWidget, l: cycleWidget }[entry.type];
+    return (make || textWidget)(me, entry, info, id, helpId);
   }
 
   function textWidget(me, entry, info, id, helpId) {
@@ -2181,6 +2195,216 @@ input[role="switch"]:checked::before { transform: translateX(1.25rem); }
     };
   }
 
+  /* The throttle of a slider or a colour picker: at most one send per
+   * throttleMs (50 ms USB, 150 ms Bluetooth), the newest value, and the
+   * send() result goes back to the throttle, so a refused or lost value is
+   * sent again on the next release. When nothing is held and nothing is
+   * pending, settle() shows what the keyboard stored (the echo, or its old
+   * value after a refusal). held(): the user has hold of the control. */
+  function throttled(me, entry, held, update) {
+    const busy = () => held() || th.pending();
+    function settle() {
+      const v = me.model.values.get(entry.key);
+      if (!busy() && v !== undefined) update(v);
+    }
+    const th = C.makeThrottle(me.throttleMs, async (v) => {
+      const ok = await send(me, entry.key, v);
+      setTimeout(settle, 0);
+      return ok;
+    });
+    return { th, busy, settle };
+  }
+
+  /* Slider: sends while it moves, throttled, and the final value on release
+   * (change). While it is held or a send is open, values read from the
+   * keyboard do not move it. */
+  function sliderWidget(me, entry, info, id, helpId) {
+    const input = h("input", { type: "range", id, min: entry.a, max: entry.b, step: 1, "aria-describedby": helpId });
+    const out = h("output", { for: id, "aria-hidden": "true" });
+    let held = false;
+    const { th, busy, settle } = throttled(me, entry, () => held, update);
+    function show(v) {
+      out.textContent = C.displayValue(entry, v);
+      input.setAttribute("aria-valuetext", out.textContent);
+    }
+    function update(v) {
+      input.value = v;
+      show(v);
+    }
+    input.addEventListener("pointerdown", () => {
+      held = true;
+    });
+    const release = () => setTimeout(() => {
+      held = false;
+      settle();
+    }, 0);
+    input.addEventListener("pointerup", release);
+    input.addEventListener("pointercancel", release);
+    input.addEventListener("input", () => {
+      show(Number(input.value));
+      th.push(Number(input.value));
+    });
+    input.addEventListener("change", () => th.flush(Number(input.value)));
+    return {
+      label: h("label", { for: id }, info.label),
+      control: h("span", { class: "control" }, input, out),
+      update,
+      busy,
+    };
+  }
+
+  /* Colour picker: like the slider; Chrome fires input while the picker is
+   * open and change when it closes. */
+  function colorWidget(me, entry, info, id, helpId) {
+    const input = h("input", { type: "color", id, "aria-describedby": helpId });
+    const out = h("output", { for: id, "aria-hidden": "true" });
+    let open = false;
+    const { th, busy, settle } = throttled(me, entry, () => open, update);
+    function update(v) {
+      input.value = C.colorInput(v);
+      out.textContent = C.formatColor(v);
+    }
+    input.addEventListener("input", () => {
+      open = true;
+      out.textContent = C.formatColor(C.parseColor(input.value));
+      th.push(C.parseColor(input.value));
+    });
+    input.addEventListener("change", () => {
+      open = false;
+      th.flush(C.parseColor(input.value));
+      settle();
+    });
+    return {
+      label: h("label", { for: id }, info.label),
+      control: h("span", { class: "control" }, input, out),
+      update,
+      busy,
+    };
+  }
+
+  /* rgb.cycle: a checkbox per effect, in cycle order; drag a row, or use its
+   * Move up and Move down buttons, to move it. At least one effect stays
+   * ticked. Every change is sent at once. */
+  function cycleWidget(me, entry, info, id, helpId) {
+    const known = (n) => C.nameLabel(entry.key, n) !== null;
+    const list = h("ol", { class: "cycle", id, "aria-labelledby": id + "-label", "aria-describedby": helpId });
+    let rows = [];
+    let dragged = null;
+    let sending = 0; /* sends the keyboard has not answered yet */
+    let sent = null; /* the list sent last, while sends are open */
+
+    /* While a send is open the rows are not replaced by values read from the
+     * keyboard (busy), so quick clicks do not undo each other; when the last
+     * answer is in, the rows show what the keyboard stored. */
+    function commit() {
+      const stored = me.model.values.get(entry.key) || [];
+      const v = C.cycleFromRows(rows, stored, known);
+      if (C.sameValue(v, sending ? sent : stored)) return;
+      sent = v;
+      sending++;
+      send(me, entry.key, v).then(() => {
+        if (--sending === 0) settle();
+      });
+    }
+
+    function move(from, to) {
+      if (to < 0 || to >= rows.length || from === to) return;
+      const [r] = rows.splice(from, 1);
+      rows.splice(to, 0, r);
+      commit();
+    }
+
+    function draw() {
+      const a = document.activeElement;
+      const focus = a && list.contains(a) ? [a.closest("li").dataset.name, a.dataset.part] : null;
+      const ticked = rows.filter((r) => r.checked).length;
+      list.replaceChildren(...rows.map((r, i) => {
+        const label = C.nameLabel(entry.key, r.name);
+        const cbId = id + "-" + r.name;
+        const cb = h("input", { type: "checkbox", id: cbId, "data-part": "cb", checked: r.checked,
+          disabled: r.checked && ticked === 1 });
+        cb.addEventListener("change", () => {
+          r.checked = cb.checked;
+          commit();
+          draw();
+        });
+        const up = h("button", { type: "button", class: "mv", "data-part": "up", "aria-label": "Move " + label + " up",
+          disabled: i === 0 }, String.fromCharCode(0x2191));
+        up.addEventListener("click", () => {
+          move(i, i - 1);
+          draw();
+        });
+        const down = h("button", { type: "button", class: "mv", "data-part": "down",
+          "aria-label": "Move " + label + " down", disabled: i === rows.length - 1 }, String.fromCharCode(0x2193));
+        down.addEventListener("click", () => {
+          move(i, i + 1);
+          draw();
+        });
+        const li = h("li", { draggable: "true", "data-name": r.name },
+          h("span", { class: "grip", "aria-hidden": "true" }, String.fromCharCode(0x2261)), cb,
+          h("label", { for: cbId }, label, h("span", { class: "help" }, " " + C.nameHelp(entry.key, r.name))),
+          up, down);
+        li.addEventListener("dragstart", (e) => {
+          dragged = i;
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", r.name);
+        });
+        li.addEventListener("dragover", (e) => {
+          if (dragged !== null) e.preventDefault();
+        });
+        li.addEventListener("drop", (e) => {
+          e.preventDefault();
+          const from = dragged;
+          dragged = null;
+          if (from !== null) move(from, i);
+          draw();
+        });
+        li.addEventListener("dragend", () => {
+          dragged = null;
+        });
+        return li;
+      }));
+      if (focus) {
+        const li = list.querySelector(`li[data-name="${focus[0]}"]`);
+        const el = li && li.querySelector(`[data-part="${focus[1]}"]`);
+        if (el && !el.disabled) el.focus();
+        else if (li) li.querySelector("input").focus();
+      }
+    }
+
+    function update(v) {
+      rows = C.cycleRows(entry.a, v, known);
+      draw();
+    }
+
+    const busy = () => dragged !== null || sending > 0;
+
+    function settle() {
+      const v = me.model.values.get(entry.key);
+      if (!busy() && v !== undefined) update(v);
+    }
+
+    return {
+      label: h("span", { class: "label", id: id + "-label" }, info.label),
+      control: null,
+      extra: list,
+      update,
+      busy,
+    };
+  }
+
+  async function resetAll() {
+    const me = conn;
+    if (!me || !window.confirm("Reset all settings to their defaults?")) return;
+    try {
+      await me.model.reset();
+      say("All settings are back to their defaults.", "info");
+    } catch (e) {
+      if (e instanceof C.TransportError) return lost(me);
+      say(C.errorText(e));
+    }
+  }
+
   // end of widgets
 
   function init() {
@@ -2196,6 +2420,7 @@ input[role="switch"]:checked::before { transform: translateX(1.25rem); }
       const sim = window.RainyDemo.sim;
       sim.setOsKeys(sim.values["kb.os_keys"] ? 0 : 2);
     });
+    $("btn-reset").addEventListener("click", resetAll);
     // end of wiring
     $("note-usb").hidden = hasSerial || !hasBle;
     $("note-ble").hidden = hasBle || !hasSerial;

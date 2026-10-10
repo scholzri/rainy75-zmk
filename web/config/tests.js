@@ -1933,6 +1933,257 @@
     }
   });
 
+  // ---- Task 12: sliders, colour, effect cycle, reset (browser only) ----
+
+  const setsOf = (sim, key) => sim.requests.filter((r) => r.cmd === 3 && r.body && r.body.k === key);
+
+  uiTest("ui: a dragged slider sends throttled, then the final value", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const s = p.d.getElementById("set-rgb-val");
+      t.eq([s.type, s.min, s.max, s.value], ["range", "16", "255", "200"]);
+      fire(s, "pointerdown");
+      for (let v = 100; v < 120; v++) {
+        s.value = v;
+        fire(s, "input");
+        await sleep(5);
+      }
+      s.value = 120;
+      fire(s, "input");
+      fire(s, "change");
+      fire(s, "pointerup");
+      await until(() => p.sim.values["rgb.val"] === 120);
+      const n = setsOf(p.sim, "rgb.val").length;
+      t.ok(n >= 2 && n <= 5, "throttled: " + n + " sends for 21 moves");
+      t.eq(s.getAttribute("aria-valuetext"), "120");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: a refused slider value is sent again on release", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const s = p.d.getElementById("set-rgb-val");
+      p.sim.failNextSet = 3;
+      fire(s, "pointerdown");
+      s.value = 90;
+      fire(s, "input");
+      await until(() => !p.d.getElementById("msg").hidden);
+      t.eq(p.sim.values["rgb.val"], 200, "the first send was refused");
+      fire(s, "change");
+      fire(s, "pointerup");
+      await until(() => p.sim.values["rgb.val"] === 90);
+      await until(() => p.d.getElementById("msg").hidden);
+      t.eq(s.value, "90");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: after release the slider shows what the keyboard stored", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const s = p.d.getElementById("set-rgb-val");
+      const check = p.sim._check.bind(p.sim);
+      p.sim._check = (d, v) => (d.key === "rgb.val" ? Math.min(v, 100) : check(d, v));
+      fire(s, "pointerdown");
+      s.value = 120;
+      fire(s, "input");
+      fire(s, "change");
+      fire(s, "pointerup");
+      await until(() => s.value === "100");
+      t.eq(p.sim.values["rgb.val"], 100);
+      t.eq(p.row("rgb.val").querySelector("output").textContent, "100");
+      t.eq(s.getAttribute("aria-valuetext"), "100");
+      /* a refused last value: the slider goes back to the keyboard's */
+      p.sim.failNextSet = 3;
+      fire(s, "pointerdown");
+      s.value = 60;
+      fire(s, "input");
+      fire(s, "change");
+      fire(s, "pointerup");
+      await until(() => !p.d.getElementById("msg").hidden);
+      await until(() => s.value === "100");
+      t.eq(p.row("rgb.val").querySelector("output").textContent, "100");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: number formats on sliders", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const idle = p.d.getElementById("set-rgb-idle-s");
+      t.eq(p.row("rgb.idle_s").querySelector("output").textContent, "Never");
+      idle.value = 90;
+      fire(idle, "input");
+      fire(idle, "change");
+      await until(() => p.sim.values["rgb.idle_s"] === 90);
+      t.eq(p.row("rgb.idle_s").querySelector("output").textContent, "1 min 30 s");
+      t.eq(p.row("kb.sleep_min").querySelector("output").textContent, "15 min");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: the colour picker", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const c = p.d.getElementById("set-ind-caps-color");
+      t.eq(c.value, "#ffffff");
+      c.value = "#ff8000";
+      fire(c, "input");
+      fire(c, "change");
+      await until(() => p.sim.values["ind.caps_color"] === 0xff8000);
+      t.eq(p.row("ind.caps_color").querySelector("output").textContent, "#FF8000");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: a refused colour is sent again when the picker closes", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const c = p.d.getElementById("set-ind-caps-color");
+      p.sim.failNextSet = 3;
+      c.value = "#00ff00";
+      fire(c, "input");
+      await until(() => !p.d.getElementById("msg").hidden);
+      t.eq(p.sim.values["ind.caps_color"], 0xffffff, "the first send was refused");
+      fire(c, "change");
+      await until(() => p.sim.values["ind.caps_color"] === 0x00ff00);
+      await until(() => p.d.getElementById("msg").hidden);
+      t.eq(c.value, "#00ff00");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: the effect cycle, by checkbox and arrow buttons", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const names = () => Array.from(p.d.querySelectorAll("#set-rgb-cycle li"), (li) => li.dataset.name);
+      t.eq(names(), C.SIM_EFFECTS);
+      p.d.getElementById("set-rgb-cycle-rainbow").click();
+      await until(() => p.sim.values["rgb.cycle"].length === 11);
+      t.eq(p.sim.values["rgb.cycle"], C.SIM_EFFECTS.filter((n) => n !== "rainbow"));
+      const up = p.d.querySelector('#set-rgb-cycle li[data-name="plasma"] [data-part="up"]');
+      t.eq(up.getAttribute("aria-label"), "Move Plasma up");
+      up.focus();
+      up.click();
+      await until(() => p.sim.values["rgb.cycle"][0] === "plasma");
+      t.eq(p.sim.values["rgb.cycle"].slice(0, 3), ["plasma", "solid", "twinkle"]);
+      t.eq(p.d.activeElement.closest("li").dataset.name, "plasma", "focus stays on the moved row");
+      p.sim.values["rgb.cycle"] = ["wave"];
+      p.sim.rev++;
+      await until(() => names()[0] === "wave", 3000);
+      t.ok(p.d.getElementById("set-rgb-cycle-wave").disabled, "the last ticked effect cannot be unticked");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: the effect cycle works from the keyboard", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const li = (n) => p.d.querySelector(`#set-rgb-cycle li[data-name="${n}"]`);
+      const all = p.d.querySelectorAll("#set-rgb-cycle li input, #set-rgb-cycle li button");
+      t.eq(all.length, 36, "a checkbox and two buttons per effect");
+      t.ok(Array.from(all).every((el) => el.tabIndex === 0 || el.disabled), "all in the tab order");
+      t.ok(li("solid").querySelector('[data-part="up"]').disabled, "no Move up on the first row");
+      t.ok(li("speedcolour").querySelector('[data-part="down"]').disabled, "no Move down on the last row");
+      const down = li("solid").querySelector('[data-part="down"]');
+      t.eq(down.getAttribute("aria-label"), "Move Solid down");
+      down.focus();
+      down.click();
+      await until(() => p.sim.values["rgb.cycle"][0] === "rainbow");
+      t.eq(p.sim.values["rgb.cycle"].slice(0, 3), ["rainbow", "solid", "plasma"]);
+      t.eq([p.d.activeElement.closest("li").dataset.name, p.d.activeElement.dataset.part], ["solid", "down"]);
+      const help = p.d.getElementById("set-rgb-cycle-help").textContent;
+      t.ok(/Move up/.test(help) && /Move down/.test(help), "the help names the buttons");
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: Move down pressed again before the keyboard answered still counts", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      p.w.RainyDemo.transport.latencyMs = 100;
+      const names = () => Array.from(p.d.querySelectorAll("#set-rgb-cycle li"), (li) => li.dataset.name);
+      const down = () => p.d.querySelector('#set-rgb-cycle li[data-name="plasma"] [data-part="down"]');
+      t.eq(names().indexOf("plasma"), 2);
+      down().click();
+      await sleep(30);
+      down().click();
+      await sleep(85); /* t = 115 ms: the first answer is in, the second is not */
+      down().click();
+      await until(() => p.sim.values["rgb.cycle"].indexOf("plasma") === 5, 3000);
+      await until(() => names().indexOf("plasma") === 5, 3000);
+      t.eq(p.sim.values["rgb.cycle"], names());
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: the effect cycle keeps effects this page does not know", async (C, env) => {
+    const p = await openDemo(env, "future");
+    try {
+      const names = () => Array.from(p.d.querySelectorAll("#set-rgb-cycle li"), (li) => li.dataset.name);
+      t.eq(names(), C.SIM_EFFECTS, "fireworks is not listed");
+      p.sim.values["rgb.cycle"] = ["solid", "fireworks", "rainbow"];
+      p.sim.rev++;
+      await until(() => !p.d.getElementById("set-rgb-cycle-plasma").checked, 3000);
+      p.d.getElementById("set-rgb-cycle-rainbow").click();
+      await until(() => p.sim.values["rgb.cycle"].length === 2);
+      t.eq(p.sim.values["rgb.cycle"], ["solid", "fireworks"]);
+      await until(() => p.d.getElementById("set-rgb-cycle-solid").disabled, 3000);
+      p.d.getElementById("set-rgb-cycle-wave").click();
+      await until(() => p.sim.values["rgb.cycle"].includes("wave"));
+      t.eq(p.sim.values["rgb.cycle"], ["solid", "wave", "fireworks"]);
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: the effect cycle, by drag and drop", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      const li = (n) => p.d.querySelector(`#set-rgb-cycle li[data-name="${n}"]`);
+      const dt = new p.w.DataTransfer();
+      li("comet").dispatchEvent(new p.w.DragEvent("dragstart", { bubbles: true, dataTransfer: dt }));
+      li("solid").dispatchEvent(new p.w.DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));
+      li("solid").dispatchEvent(new p.w.DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
+      await until(() => p.sim.values["rgb.cycle"][0] === "comet");
+      t.eq(p.sim.values["rgb.cycle"].slice(0, 3), ["comet", "solid", "rainbow"]);
+    } finally {
+      p.close();
+    }
+  });
+
+  uiTest("ui: reset to defaults asks first", async (C, env) => {
+    const p = await openDemo(env);
+    try {
+      p.sim.values["rgb.val"] = 50;
+      p.sim.values["kb.os"] = "mac";
+      p.sim.rev++;
+      await until(() => p.d.getElementById("set-rgb-val").value === "50", 3000);
+      p.w.confirm = () => false;
+      p.d.getElementById("btn-reset").click();
+      await sleep(100);
+      t.eq(p.sim.values["kb.os"], "mac", "not confirmed: nothing reset");
+      p.w.confirm = () => true;
+      p.d.getElementById("btn-reset").click();
+      await until(() => p.d.getElementById("set-rgb-val").value === "200");
+      await until(() => !p.d.getElementById("msg").hidden);
+      t.eq([p.sim.values["rgb.val"], p.sim.values["kb.os"]], [200, "win"]);
+      t.eq(p.d.getElementById("msg").textContent, "All settings are back to their defaults.");
+    } finally {
+      p.close();
+    }
+  });
+
   // end of tests
 
   async function runOne(fn, C, env) {
