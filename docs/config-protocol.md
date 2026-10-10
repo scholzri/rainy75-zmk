@@ -112,6 +112,9 @@ read).
 | `ind.bat_low` | u | 0..50 (%, 0 = off) | 0 | `rainy_cfg/ind.bat_low` |
 
 - `rgb.boot_effect`: the effect shown after power-on; `last` keeps the effect last chosen.
+  A fixed boot effect is shown without being saved, so switching back to `last` brings
+  back the last saved effect (the one before the boot effect) unless something saved the
+  lighting since (for example an RGB Fn key).
 - `rgb.cycle`: the effects Fn+Enter steps through, in this order: the entry after the
   current effect (wrapping), or the first entry when the current effect is not listed. An
   empty list (`[]`) means all effects in table order. `set` refuses names this firmware does
