@@ -91,7 +91,8 @@ keys) and shows the new values; it pauses while the tab is in the background and
 up when you come back. If the keyboard refuses a change, the page says why and shows the
 value the keyboard kept. **Reset to defaults** sets every setting back (after a question).
 If the cable is pulled or Bluetooth drops, the page says "Connection lost" and offers the
-connect buttons again.
+connect buttons again; over USB it also connects by itself when the keyboard is plugged
+back in, and the message goes away.
 
 The number of keys that follow the Computer and GUI key lock settings changes with ZMK
 Studio edits, which do not count as a settings change; the page reads it again every few
@@ -110,8 +111,9 @@ Messages you may meet:
 | This browser cannot connect to the keyboard | Neither Web Serial nor Web Bluetooth: use Chrome or Edge on a computer, or the demo. |
 | USB needs Chrome or Edge on a desktop computer. / Bluetooth is not available in this browser. | The other connection still works. On Linux, Bluetooth needs the Chrome flag above. |
 | This is the ZMK Studio port. | You picked the Studio port: pick the other one. |
-| The port could not be opened (...) | Another program holds the port: close it and try again. |
+| The port could not be opened (...) | Another program holds the port: close it and try again. While ZMK Studio is connected over USB its port is busy: choose the other Rainy 75 port. |
 | The keyboard is not paired with this computer. | Pair it first, as under Over Bluetooth: a free profile (Fn+F1, F2 or F3), the computer's Bluetooth settings, the code typed on the keyboard's number row, Enter. If the computer already lists it as paired, remove the pairing on both sides and pair again. |
+| Bluetooth adapter not available. | The computer has no working Bluetooth adapter, or Bluetooth is switched off: turn it on. USB still works. |
 | The keyboard did not answer over Bluetooth. | The remembered keyboard is not reachable: click Connect Bluetooth again and choose it from the list. |
 | This firmware has no runtime settings | The firmware is older than v0.4.0: update it. |
 | The keyboard refused: invalid value (rc 3) | The keyboard did not accept the value (also "unknown setting", "read-only setting"). The page shows the value the keyboard has. |
