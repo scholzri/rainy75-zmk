@@ -21,6 +21,12 @@ bool sleep_policy_should_sleep(uint32_t idle_ms, uint32_t sleep_min, bool usb_ho
     return (uint64_t)idle_ms > (uint64_t)sleep_min * MS_PER_MIN;
 }
 
-bool sleep_policy_usb_host(bool hid_ready, bool bus_suspended, bool output_ble) {
-    return hid_ready && !(bus_suspended && output_ble);
+bool sleep_policy_usb_host(bool hid_ready, bool bus_suspended, bool output_ble,
+                           uint32_t ble_suspended_ms) {
+    if (!hid_ready) {
+        return false;
+    }
+    /* typing over Bluetooth to another device while the computer has USB
+     * asleep: past the grace time, a link to that computer would have dropped */
+    return !(bus_suspended && output_ble && ble_suspended_ms > SLEEP_POLICY_BLE_GRACE_MS);
 }

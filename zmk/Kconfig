@@ -156,12 +156,15 @@ config RAINY75_SLEEP
 	  15, 0 = never) without a key position or sensor event or a settings
 	  change, but not while a USB host is connected unless kb.sleep_on_usb
 	  is on. A sleeping computer counts as a host, except while the
-	  keyboard types over Bluetooth. Sleep is ZMK's sequence: suspend the
-	  devices (zmk_pm_suspend_devices), then sys_poweroff(), whose wake
-	  path is src/poweroff.c (any key cold-boots the keyboard). Without
-	  RAINY75_CONFIG the defaults apply. The fallback to ZMK's own sleep is
-	  RAINY75_SLEEP=n, ZMK_SLEEP=y and ZMK_USB_NO_VBUS_DETECT=y (see
-	  conf/app.conf). src/sleep/, decisions in src/sleep/sleep_policy.c.
+	  keyboard types over Bluetooth to another device and the computer
+	  has had USB asleep for about a minute (a Bluetooth link to that
+	  computer drops sooner, and the output goes back to USB). Sleep is
+	  ZMK's sequence: suspend the devices (zmk_pm_suspend_devices), then
+	  sys_poweroff(), whose wake path is src/poweroff.c (any key
+	  cold-boots the keyboard). Without RAINY75_CONFIG the defaults
+	  apply. The fallback to ZMK's own sleep is RAINY75_SLEEP=n,
+	  ZMK_SLEEP=y and ZMK_USB_NO_VBUS_DETECT=y (see conf/app.conf).
+	  src/sleep/, decisions in src/sleep/sleep_policy.c.
 
 config RAINY_RGB_ANSI_LEDMAP
 	bool "ANSI LED map (strip has no LED at the ISO <> slot)"

@@ -56,6 +56,10 @@ static volatile uint32_t last_activity_ms; /* k_uptime_get_32() of the last acti
 static uint32_t last_rev; /* cfg_rev() at the last check */
 #endif
 static int8_t logged_host = -1; /* USB host state last logged, -1 = none yet */
+#if IS_ENABLED(CONFIG_ZMK_USB)
+static bool ble_suspended;           /* bus suspended and output Bluetooth at the last check */
+static uint32_t ble_suspended_since; /* k_uptime_get_32() when that began */
+#endif
 
 static int sleep_activity_listener(const zmk_event_t *eh) {
     ARG_UNUSED(eh);
@@ -103,17 +107,28 @@ static bool note_settings_change(uint32_t now) {
 }
 
 /* ZMK's USB and output state, read at every check: the state that its
- * zmk_usb_conn_state_changed and endpoint events announce. */
-static bool usb_host(void) {
+ * zmk_usb_conn_state_changed and endpoint events announce. The time since
+ * the bus suspended with the output on Bluetooth starts when both first
+ * hold and ends when either stops (now - since wraps correctly modulo 2^32
+ * for times below 49 days). */
+static bool usb_host(uint32_t now) {
 #if IS_ENABLED(CONFIG_ZMK_USB)
+    bool suspended = zmk_usb_get_status() == USB_DC_SUSPEND;
     bool output_ble = false;
 
 #if IS_ENABLED(CONFIG_ZMK_BLE)
     output_ble = zmk_endpoint_get_selected().transport == ZMK_TRANSPORT_BLE;
 #endif
-    return sleep_policy_usb_host(zmk_usb_is_hid_ready(), zmk_usb_get_status() == USB_DC_SUSPEND,
-                                 output_ble);
+    if (!(suspended && output_ble)) {
+        ble_suspended = false;
+    } else if (!ble_suspended) {
+        ble_suspended = true;
+        ble_suspended_since = now;
+    }
+    return sleep_policy_usb_host(zmk_usb_is_hid_ready(), suspended, output_ble,
+                                 ble_suspended ? now - ble_suspended_since : 0);
 #else
+    ARG_UNUSED(now);
     return false;
 #endif
 }
@@ -129,7 +144,7 @@ static void sleep_check(struct k_work *work) {
     uint32_t last = last_activity_ms;
     uint32_t now = k_uptime_get_32();
     uint32_t minutes = sleep_min();
-    bool host = usb_host();
+    bool host = usb_host(now);
 
     ARG_UNUSED(work);
     if (note_settings_change(now)) {
