@@ -140,8 +140,8 @@ Rendered on top of the active effect — and **still shown when RGB is toggled o
   suppression, no host mode): the pulse never keeps the LED rail on by itself. A level of 0
   (ZMK's value before its first battery sample) never pulses.
 - **Battery gauge** (Fn+B) → a 10-segment bar on the number row, level-colored
-  (green→red), 3 s (150 frames). **Approximate** — the battery-ADC pin/divider/Vref are not yet
-  hardware-validated (see Open items).
+  (green→red), 3 s (150 frames). **Approximate**: the battery-ADC pin/divider/Vref are
+  not yet hardware-validated (see Open items).
 - **BLE slot status** (F1..F3 = BT profiles 1..3, F4 = output), see below.
 
 ### BLE slot status and passkey guidance
